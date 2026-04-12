@@ -2,8 +2,8 @@
 
 <metadata>
 
-- **Version**: 0.3.0
-- **Date**: 2026-04-12T21:00:00+09:00
+- **Version**: 0.4.0
+- **Date**: 2026-04-12T22:00:00+09:00
 - **Status**: Draft
 - **Stakeholders**: Mike Tian-Jian Jiang (sole developer, personal tool)
 - **Design**: See [design.md](design.md) for architecture and implementation decisions
@@ -60,7 +60,7 @@ Inspired by [Claude Cowork](https://www.anthropic.com/product/claude-cowork) (UX
 - [MUST] Enforce three timeout layers:
   - Iteration limit (default 25) -- prevents infinite agent loops
   - Per-tool-call wall-clock timeout (default 300s) -- bounds a single script/MCP call
-  - Sandbox resource caps (see 2.6) -- hard CPU/memory enforcement
+  - Sandbox resource caps (see 2.5) -- hard CPU/memory enforcement
 - [MUST] Support both tool-call and plain text responses
 - [SHOULD] Support activity-based idle detection as alternative to hard wall-clock timeout
 
@@ -78,13 +78,6 @@ Inspired by [Claude Cowork](https://www.anthropic.com/product/claude-cowork) (UX
 - [MUST] Interpolate env vars in API keys (`${VAR}` syntax)
 
 </required>
-
-<forbidden>
-
-- `openai` Python SDK, LangChain, LlamaIndex, or similar heavyweight frameworks
-- Hard-coded model names or endpoints
-
-</forbidden>
 
 ### 2.3 Skill System
 
@@ -111,7 +104,7 @@ Inspired by [Claude Cowork](https://www.anthropic.com/product/claude-cowork) (UX
 - [MUST] Model-driven activation (LLM decides) and user-explicit (`/skill activate <name>`)
 - [MUST] Lenient validation: warn on issues, skip only on missing description or unparseable YAML
 - [MUST] Name collisions: project-level overrides user-level
-- [MUST] Execute scripts from `scripts/` as tool calls, through the sandbox (see 2.6)
+- [MUST] Execute scripts from `scripts/` as tool calls, through the sandbox (see 2.5)
 - [MUST] Detect script runner via shebang; Python with PEP 723 deps via `uv run`
 - [MUST] Capture stdout as tool result, stderr for diagnostics
 - [MUST] Discover tool schemas via `--help` parsing or inline metadata
@@ -145,29 +138,19 @@ Inspired by [Claude Cowork](https://www.anthropic.com/product/claude-cowork) (UX
 <required>
 
 - [MUST] Route all tool execution through a sandbox
-- [MUST] Auto-detect strongest available backend at startup:
-
-  | Tier | Backend | Category | Platform |
-  |------|---------|----------|----------|
-  | 1 | Apple Containers | Full-env | macOS 26+ |
-  | 2 | Firecracker | Full-env | Linux + KVM |
-  | 3 | gVisor (`runsc`) | Full-env | Linux |
-  | 4 | Rootless container (Podman/Finch/Docker) | Full-env | Cross-platform |
-  | 5 | bubblewrap / nsjail | Process-only | Linux |
-  | 6 | None (warn) | None | Dev mode |
-
-- [MUST] Skills declaring tool dependencies require a full-environment sandbox (Tier 1-4)
+- [MUST] Auto-detect strongest available backend at startup (see [design.md](design.md) for backend tiers)
+- [MUST] Support two sandbox categories: full-environment (can install packages) and process-isolation (host env only)
+- [MUST] Skills declaring tool dependencies require a full-environment sandbox
 - [MUST] macOS must have at least one functional backend beyond noop
 - [MUST] `SandboxBackend` ABC: `execute(command, policy, workdir, env, stdin, timeout) -> SandboxResult`
 - [MUST] `SandboxPolicy` defaults: CPU 120s, memory 512 MB, disk 100 MB, pids 64, network none
 - [MUST] Backend override via `sandbox.backend` in config
-- [SHOULD] Prefer Podman rootless as cross-platform default (free, daemonless on Linux)
 
 </required>
 
 <forbidden>
 
-- Executing tool calls outside sandbox in production mode
+- Executing tool calls outside sandbox unless explicitly opted out via config
 - Filesystem access beyond explicit bind mounts
 - Defaulting to full network access
 
@@ -229,8 +212,8 @@ Inspired by [Claude Cowork](https://www.anthropic.com/product/claude-cowork) (UX
 
 ## 4. Acceptance Criteria
 
-- **Walking skeleton**: `uv run stoiquent run` launches NiceGUI; chat round-trip with Ollama works
-- **Skills + sandbox**: Activate skill with script, trigger tool use, verify sandboxed execution
-- **MCP Apps**: Skill with `assets/app.html` serves via `ui://` with `_meta.ui.resourceUri`
-- **Full UI**: File browsing, task management, saved conversations, skill activation panel
-- **Sandbox isolation**: Writes outside allowed paths fail; memory limits enforced; network blocked when policy=none
+- **Walking skeleton** (2.1, 2.2, 2.6, 2.8): `uv run stoiquent run` launches NiceGUI; chat round-trip with Ollama works
+- **Skills + sandbox** (2.3, 2.5): Activate skill with script, trigger tool use, verify sandboxed execution
+- **MCP Apps** (2.4): Skill with `assets/app.html` serves via `ui://` with `_meta.ui.resourceUri`
+- **Full UI** (2.6, 2.7): File browsing, task management, saved conversations, skill activation panel
+- **Sandbox isolation** (2.5, 3): Writes outside allowed paths fail; memory limits enforced; network blocked when policy=none

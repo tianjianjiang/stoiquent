@@ -2,8 +2,8 @@
 
 <metadata>
 
-- **Version**: 0.1.0
-- **Date**: 2026-04-12T21:00:00+09:00
+- **Version**: 0.4.0
+- **Date**: 2026-04-12T22:00:00+09:00
 - **Status**: Draft
 - **Requirements**: See [requirements.md](requirements.md) for what the system must do
 
@@ -30,7 +30,20 @@ stoiquent/
 +-- tests/
 ```
 
-### 1.2 Data Flow
+### 1.2 Sandbox Backend Tiers
+
+Auto-detected at startup, probed in order of isolation strength:
+
+| Tier | Backend | Category | Platform |
+|------|---------|----------|----------|
+| 1 | Apple Containers | Full-env | macOS 26+ |
+| 2 | Firecracker | Full-env | Linux + KVM |
+| 3 | gVisor (`runsc`) | Full-env | Linux |
+| 4 | Rootless container (Podman/Finch/Docker) | Full-env | Cross-platform |
+| 5 | bubblewrap / nsjail | Process-only | Linux |
+| 6 | None (warn) | None | Dev mode |
+
+### 1.3 Data Flow
 
 ```mermaid
 flowchart TD
@@ -41,7 +54,7 @@ flowchart TD
     E --> F{Tool calls?}
     F -- Yes --> G[Dispatch through sandbox]
     G --> H[Append results]
-    H --> D
+    H --> C
     F -- No --> I[Save + display response]
 ```
 
@@ -66,8 +79,8 @@ native_tools = true                # false = prompt-based fallback
 paths = ["~/.agents/skills", "~/.stoiquent/skills"]
 
 [sandbox]
-backend = "auto"                   # "auto" | "podman" | "finch" | ... | "none"
-container_runtime = "auto"         # "auto" | "podman" | "finch" | "docker"
+backend = "auto"                   # "auto" | "apple-container" | "firecracker" | "gvisor" | "podman" | "finch" | "docker" | "bwrap" | "nsjail" | "none"
+container_runtime = "auto"         # "auto" | "podman" | "finch" | "docker" -- selects OCI runtime when backend is "auto" or Tier 4
 tool_timeout = 300.0               # per-tool-call wall-clock (seconds)
 
 [persistence]
@@ -82,13 +95,12 @@ data_dir = "~/.stoiquent"
 | JSON file persistence | Personal tool; simpler than SQLite to debug/backup |
 | MCP deps in SKILL.md metadata | Skills self-declare dependencies; auto-started on activation |
 | httpx over openai SDK | Lighter, full SSE control, no framework opinions |
+| No LangChain/LlamaIndex | Agent loop ~80 lines; these add massive deps for unneeded functionality |
 | Single `openai_compat.py` | All target backends expose OpenAI-compatible API |
 | Podman rootless default sandbox | Free, daemonless on Linux, no licensing restrictions |
+| Click for CLI | Lightweight, composable subcommands, widely adopted |
 
 ## 4. References
 
-- [agentskills.io Specification](https://agentskills.io/specification) | [Client Implementation](https://agentskills.io/client-implementation/adding-skills-support)
-- [MCP Apps Overview](https://modelcontextprotocol.io/extensions/apps/overview)
-- [NiceGUI Documentation](https://nicegui.io/documentation)
-- Sandbox runtimes: [Podman](https://podman.io/) | [Finch](https://github.com/runfinch/finch) | [Apple Containers](https://github.com/apple/container) | [gVisor](https://gvisor.dev/) | [Firecracker](https://firecracker-microvm.github.io/)
+- See [requirements.md 1.3](requirements.md#13-references) for specification and runtime references
 - [Nanobot Agent Loop](https://github.com/HKUDS/nanobot/blob/main/nanobot/agent/loop.py) (reference architecture)
