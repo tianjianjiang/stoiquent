@@ -191,7 +191,9 @@ Inspired by [Claude Cowork](https://www.anthropic.com/product/claude-cowork) (UX
 <required>
 
 - [MUST] JSON files: one per conversation session, single task list
-- [MUST] XDG-compliant: `~/.local/share/stoiquent/{conversations,tasks}/`
+- [MUST] Platform-appropriate data directory, configurable via `persistence.data_dir`:
+  - Linux: `~/.local/share/stoiquent/` (XDG)
+  - macOS: `~/Library/Application Support/stoiquent/`
 - [MUST] Auto-save after each message exchange
 - [MUST] List and load past conversations in sidebar
 
