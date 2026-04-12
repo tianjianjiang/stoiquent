@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from nicegui import ui
+from nicegui import app, ui
 
 from stoiquent.agent.session import Session
 from stoiquent.llm.openai_compat import OpenAICompatProvider
@@ -12,14 +12,21 @@ def start(config: AppConfig) -> None:
     provider_name = config.default_provider
     provider_config = config.providers.get(provider_name)
     if provider_config is None:
-        msg = f"Provider '{provider_name}' not found in config. Available: {list(config.providers)}"
+        available = list(config.providers) if config.providers else []
+        msg = (
+            f"Provider '{provider_name}' not found in config. "
+            f"Available: {available}. "
+            "Check stoiquent.toml or create ~/.stoiquent/config.toml"
+        )
         raise SystemExit(msg)
 
     provider = OpenAICompatProvider(provider_config)
     session = Session(provider=provider)
 
+    app.on_shutdown(provider.close)
+
     @ui.page("/")
-    async def main_page() -> None:
+    async def _main_page() -> None:
         layout.render(session)
 
     kwargs: dict = {

@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import AsyncIterator
 
 import httpx
 
-from stoiquent.llm.reasoning import extract_reasoning
 from stoiquent.models import Message, ProviderConfig, StreamChunk
+
+logger = logging.getLogger(__name__)
 
 
 class OpenAICompatProvider:
@@ -35,26 +37,44 @@ class OpenAICompatProvider:
         if tools and self.config.native_tools:
             payload["tools"] = tools
 
-        async with self._client.stream(
-            "POST",
-            "/chat/completions",
-            json=payload,
-            headers=headers,
-        ) as response:
-            response.raise_for_status()
-            async for line in response.aiter_lines():
-                chunk = _parse_sse_line(line, self.config.supports_reasoning)
-                if chunk is not None:
-                    yield chunk
+        try:
+            async with self._client.stream(
+                "POST",
+                "/chat/completions",
+                json=payload,
+                headers=headers,
+            ) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    chunk = _parse_sse_line(line, self.config.supports_reasoning)
+                    if chunk is not None:
+                        yield chunk
+        except httpx.ConnectError:
+            raise ConnectionError(
+                f"Cannot connect to LLM at {self.config.base_url}. "
+                "Ensure Ollama is running (ollama serve)."
+            ) from None
+        except httpx.TimeoutException as e:
+            raise TimeoutError(
+                f"LLM request timed out: {e}. The model may be loading."
+            ) from e
+        except httpx.HTTPStatusError as e:
+            status = e.response.status_code
+            if status == 404:
+                raise RuntimeError(
+                    f"Model '{self.config.model}' not found. "
+                    f"Run: ollama pull {self.config.model}"
+                ) from None
+            raise RuntimeError(
+                f"LLM returned HTTP {status}. Check provider configuration."
+            ) from e
 
     async def close(self) -> None:
         await self._client.aclose()
 
 
 def _serialize_message(msg: Message) -> dict:
-    result: dict = {"role": msg.role}
-    if msg.content is not None:
-        result["content"] = msg.content
+    result: dict = {"role": msg.role, "content": msg.content}
     if msg.tool_calls:
         result["tool_calls"] = [
             {
@@ -79,6 +99,7 @@ def _parse_sse_line(line: str, supports_reasoning: bool) -> StreamChunk | None:
     try:
         obj = json.loads(data)
     except json.JSONDecodeError:
+        logger.warning("Skipping malformed SSE data: %s", data[:200])
         return None
 
     choices = obj.get("choices", [])
@@ -93,12 +114,6 @@ def _parse_sse_line(line: str, supports_reasoning: bool) -> StreamChunk | None:
 
     if supports_reasoning and "reasoning_content" in delta:
         reasoning_delta = delta["reasoning_content"] or ""
-
-    if not supports_reasoning and content_delta:
-        clean, reasoning = extract_reasoning(content_delta)
-        if reasoning:
-            content_delta = clean
-            reasoning_delta = reasoning
 
     tool_calls_delta = delta.get("tool_calls")
 

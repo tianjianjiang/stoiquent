@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import click
 
+from stoiquent.models import UIConfig
+
 
 @click.group()
 def main() -> None:
@@ -21,7 +23,7 @@ def run(mode: str | None) -> None:
 
     config = load_config()
     if mode is not None:
-        config.ui.mode = mode  # type: ignore[assignment]
+        config.ui = UIConfig(mode=mode, host=config.ui.host, port=config.ui.port)
 
     from stoiquent.app import start
 

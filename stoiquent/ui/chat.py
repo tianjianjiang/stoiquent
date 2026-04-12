@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import logging
+
 from nicegui import ui
 
 from stoiquent.agent.loop import run_agent_loop
 from stoiquent.agent.session import Session
 from stoiquent.models import StreamChunk
+
+logger = logging.getLogger(__name__)
 
 
 class ChatPanel:
@@ -36,7 +40,9 @@ class ChatPanel:
 
         self._input.value = ""
 
-        assert self._messages_container is not None
+        if self._messages_container is None:
+            raise RuntimeError("ChatPanel.render() must be called before _send()")
+
         with self._messages_container:
             ui.chat_message(text=user_text, name="You", sent=True)
 
@@ -71,8 +77,14 @@ class ChatPanel:
 
         try:
             await run_agent_loop(self.session, user_text, on_chunk)
-        except Exception as e:
-            response_md.set_content(f"**Error:** {e}")
+        except (ConnectionError, TimeoutError) as e:
+            logger.warning("LLM connection failed: %s", e)
+            response_md.set_content(f"**Connection error:** {e}")
+        except Exception:
+            logger.exception("Unexpected error in agent loop")
+            response_md.set_content(
+                "**Error:** An unexpected error occurred. Check logs for details."
+            )
         finally:
             self._messages_container.remove(spinner)
 

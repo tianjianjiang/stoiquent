@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import re
 import tomllib
@@ -7,13 +8,31 @@ from pathlib import Path
 
 from stoiquent.models import AppConfig, ProviderConfig, UIConfig
 
+logger = logging.getLogger(__name__)
+
 _ENV_VAR_PATTERN = re.compile(r"\$\{(\w+)\}")
 
 
 def _interpolate_env(value: str) -> str:
     def replace(match: re.Match) -> str:
-        return os.environ.get(match.group(1), "")
+        var_name = match.group(1)
+        result = os.environ.get(var_name)
+        if result is None:
+            logger.warning(
+                "Environment variable '%s' referenced in config but not set; "
+                "using empty string",
+                var_name,
+            )
+            return ""
+        return result
     return _ENV_VAR_PATTERN.sub(replace, value)
+
+
+def _interpolate_dict(data: dict) -> dict:
+    for key, value in data.items():
+        if isinstance(value, str) and "${" in value:
+            data[key] = _interpolate_env(value)
+    return data
 
 
 def _find_config_file() -> Path | None:
@@ -32,8 +51,13 @@ def load_config(path: Path | None = None) -> AppConfig:
     if config_path is None:
         return AppConfig()
 
-    with open(config_path, "rb") as f:
-        raw = tomllib.load(f)
+    try:
+        with open(config_path, "rb") as f:
+            raw = tomllib.load(f)
+    except tomllib.TOMLDecodeError as e:
+        raise SystemExit(f"Invalid TOML in {config_path}: {e}") from None
+    except PermissionError:
+        raise SystemExit(f"Cannot read config file: {config_path}") from None
 
     ui_config = UIConfig(**raw.get("ui", {}))
 
@@ -42,8 +66,7 @@ def load_config(path: Path | None = None) -> AppConfig:
     default_provider = llm_section.get("default", "local-qwen")
 
     for name, prov_data in llm_section.get("providers", {}).items():
-        if "api_key" in prov_data:
-            prov_data["api_key"] = _interpolate_env(prov_data["api_key"])
+        _interpolate_dict(prov_data)
         providers[name] = ProviderConfig(**prov_data)
 
     return AppConfig(

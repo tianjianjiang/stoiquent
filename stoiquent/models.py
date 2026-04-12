@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, Self
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class ToolCall(BaseModel):
@@ -27,11 +27,11 @@ class StreamChunk(BaseModel):
 
 
 class ProviderConfig(BaseModel):
-    type: str = "openai"
-    base_url: str
+    type: Literal["openai"] = "openai"
+    base_url: str = Field(min_length=1)
     model: str
     api_key: str = ""
-    max_tokens: int = 8192
+    max_tokens: int = Field(default=8192, gt=0)
     supports_reasoning: bool = False
     native_tools: bool = True
 
@@ -39,10 +39,19 @@ class ProviderConfig(BaseModel):
 class UIConfig(BaseModel):
     mode: Literal["native", "browser"] = "native"
     host: str = "127.0.0.1"
-    port: int = 8080
+    port: int = Field(default=8080, ge=1, le=65535)
 
 
 class AppConfig(BaseModel):
     ui: UIConfig = Field(default_factory=UIConfig)
     default_provider: str = "local-qwen"
     providers: dict[str, ProviderConfig] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _check_default_provider(self) -> Self:
+        if self.providers and self.default_provider not in self.providers:
+            raise ValueError(
+                f"default_provider '{self.default_provider}' not in providers: "
+                f"{list(self.providers)}"
+            )
+        return self
