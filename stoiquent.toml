@@ -1,0 +1,24 @@
+[ui]
+mode = "native"                    # "native" | "browser"
+
+[llm]
+default = "local-qwen"
+
+[llm.providers.local-qwen]
+type = "openai"
+base_url = "http://localhost:11434/v1"
+model = "qwen3:32b"
+api_key = ""
+supports_reasoning = true
+native_tools = true                # false = prompt-based fallback
+
+[skills]
+paths = ["~/.agents/skills", "~/.stoiquent/skills"]
+
+[sandbox]
+backend = "auto"
+container_runtime = "auto"
+tool_timeout = 300.0
+
+[persistence]
+data_dir = "~/.stoiquent"
