@@ -28,6 +28,32 @@ keeping data private while maintaining full skill portability.
 
 </context>
 
+### 1.1 Glossary
+
+- **SKILL.md** - Metadata + instructions file per the [agentskills.io specification](https://agentskills.io/specification)
+- **Progressive disclosure** - 3-tier loading strategy: catalog metadata at startup, full instructions on activation, resources on demand
+- **MCP** - [Model Context Protocol](https://modelcontextprotocol.io), the standard for tool/resource interchange between agents and tools
+- **MCP App** - Interactive UI resource served via `ui://` scheme per [MCP Apps spec](https://modelcontextprotocol.io/extensions/apps/overview)
+- **Sandbox backend** - An isolation layer that enforces resource and filesystem policies on tool execution. Two categories: *full-environment* (OCI container or VM -- can install packages) and *process-isolation* (namespace/seccomp filtering -- host env only)
+- **OCI container** - A standardized container image format; Stoiquent uses Podman/Finch/Docker to run skill scripts in isolated containers where tools can be installed
+- **OpenAI-compatible endpoint** - Any HTTP API implementing the `/v1/chat/completions` contract (Ollama, vLLM, llama.cpp, LM Studio, DeepSeek, etc.)
+
+### 1.2 References
+
+- [agentskills.io Specification](https://agentskills.io/specification)
+- [agentskills.io Client Implementation Guide](https://agentskills.io/client-implementation/adding-skills-support)
+- [agentskills.io Using Scripts in Skills](https://agentskills.io/skill-creation/using-scripts)
+- [MCP Apps Overview](https://modelcontextprotocol.io/extensions/apps/overview)
+- [Nanobot Agent Loop](https://github.com/HKUDS/nanobot/blob/main/nanobot/agent/loop.py) (reference architecture)
+- [NiceGUI Documentation](https://nicegui.io/documentation)
+- [Claude Cowork](https://www.anthropic.com/product/claude-cowork) (UX inspiration)
+- [Podman](https://podman.io/) (recommended cross-platform sandbox runtime)
+- [Finch](https://github.com/runfinch/finch) (lightweight macOS/Linux container alternative)
+- [Apple Containers](https://github.com/apple/container) (macOS 26+ native lightweight VMs)
+- [Colima](https://github.com/abiosoft/colima) (lightweight macOS container alternative)
+- [gVisor](https://gvisor.dev/) (syscall-intercepting OCI runtime for Linux)
+- [Firecracker](https://firecracker-microvm.github.io/) (production multi-tenant microVM sandbox)
+
 ## 2. Functional Requirements
 
 ### 2.1 Agent Loop
@@ -38,9 +64,14 @@ keeping data private while maintaining full skill portability.
 - [MUST] Build context from: system prompt + skill catalog + active skill instructions + tool schemas + conversation history
 - [MUST] Stream LLM responses to UI callback for real-time display
 - [MUST] Execute tool calls returned by the LLM, append results, and loop
-- [MUST] Enforce a configurable max iteration limit (default 10) to prevent runaway loops
+- [MUST] Enforce a configurable max iteration limit (default 25) to prevent runaway loops
+- [MUST] Distinguish between three timeout layers:
+  - Iteration limit (loop count, default 25) -- prevents infinite agent loops
+  - Per-tool-call wall-clock timeout (default 300s) -- bounds a single script/MCP call
+  - Sandbox resource caps (CPU time default 120s, memory default 512 MB) -- hard enforcement
 - [MUST] Support both tool-call responses and plain text responses from the LLM
 - [SHOULD] Forward streaming chunks (content, reasoning, tool calls) separately to the UI
+- [SHOULD] Support activity-based idle detection as an alternative to hard wall-clock timeout for long-running tools
 
 </required>
 
@@ -76,7 +107,7 @@ keeping data private while maintaining full skill portability.
 - [MUST] Comply fully with the [agentskills.io specification](https://agentskills.io/specification)
 - [MUST] Parse SKILL.md files: YAML frontmatter (name, description, license, compatibility, metadata, allowed-tools) + markdown body
 - [MUST] Support the full skill directory structure:
-  ```
+  ```text
   skill-name/
   +-- SKILL.md          # Required: metadata + instructions
   +-- scripts/          # Optional: executable code
@@ -109,7 +140,7 @@ keeping data private while maintaining full skill portability.
 - [MUST] Detect script runner: check shebang line, or fall back to bash
 - [MUST] Support Python scripts with PEP 723 inline dependencies via `uv run`
 - [MUST] Capture stdout as tool result and stderr for diagnostics
-- [MUST] Enforce configurable timeout (default 60s)
+- [MUST] Enforce configurable per-tool-call timeout (default 300s)
 - [MUST] Discover tool schemas from scripts via `--help` output parsing or inline metadata
 - [SHOULD] Support Python, Bash, and JavaScript/TypeScript scripts
 
@@ -165,30 +196,38 @@ keeping data private while maintaining full skill portability.
 
 - [MUST] Route all agent tool execution (script calls, code execution) through a sandbox
 - [MUST] Auto-detect the strongest available sandbox backend at startup
+- [MUST] Support two sandbox categories:
+  - *Full-environment* (OCI container or VM): can install packages, run servers, full Linux userland
+  - *Process-isolation* (namespace/seccomp): syscall filtering only, host environment
 - [MUST] Support tiered sandbox backends (probed in order of restrictiveness):
 
-  | Tier | Backend | Isolation | Use case |
-  |------|---------|-----------|----------|
-  | 1 | Firecracker | Hardware (KVM) | Production multi-tenant |
-  | 2 | gVisor (`runsc`) | Syscall interception | Container/server |
-  | 3 | bubblewrap (`bwrap`) | Namespace + seccomp | CLI default |
-  | 4 | nsjail | Namespace + seccomp-bpf | Alternative to bwrap |
-  | 5 | None (warn) | Process only | Dev mode, explicit opt-in |
+  | Tier | Backend | Category | Isolation | Platform |
+  |------|---------|----------|-----------|----------|
+  | 1 | Apple Containers | Full-env | Lightweight VM + OCI | macOS 26+ |
+  | 2 | Firecracker | Full-env | Hardware (KVM) + OCI | Linux |
+  | 3 | gVisor (`runsc`) | Full-env | Syscall interception + OCI | Linux |
+  | 4 | Rootless container (Podman/Finch/Docker) | Full-env | OCI container | Cross-platform |
+  | 5 | bubblewrap (`bwrap`) / nsjail | Process | Namespace + seccomp | Linux |
+  | 6 | None (warn) | None | Process only | Dev mode |
 
+- [MUST] Skills that declare tool dependencies (via SKILL.md frontmatter) MUST be executed in a full-environment sandbox (OCI container or VM) capable of package installation
+- [MUST] macOS MUST have at least one functional sandbox backend beyond noop (Podman rootless, Finch, Colima, or Apple Containers)
 - [MUST] Define a `SandboxBackend` abstract interface:
   - `execute(command, policy, workdir, env, stdin, timeout) -> SandboxResult`
   - `is_available() -> bool`
   - `isolation_level -> IsolationLevel`
 - [MUST] Define `SandboxPolicy` with configurable:
-  - CPU time limit (default 30s)
+  - CPU time limit (default 120s)
   - Memory limit (default 512 MB)
   - Disk limit (default 100 MB)
   - Process count limit (default 64)
   - Network policy: none / egress_only / full (default none)
   - Writable paths (explicit allowlist)
   - Read-only bind mounts
+  - Environment type: container / process / none (auto-detected from backend)
 - [MUST] Warn at startup if no sandbox backend is available (noop fallback)
 - [MUST] Allow backend override in configuration (`sandbox.backend` in stoiquent.toml)
+- [SHOULD] Prefer Podman rootless as the cross-platform default container runtime (free, daemonless on Linux, no licensing restrictions)
 
 </required>
 
@@ -233,7 +272,7 @@ keeping data private while maintaining full skill portability.
 - [MUST] Store conversation history as JSON files (one file per session)
 - [MUST] Store task lists as JSON
 - [MUST] Use XDG-compliant data directory: `~/.local/share/stoiquent/`
-  ```
+  ```text
   ~/.local/share/stoiquent/
   +-- conversations/
   |   +-- 2026-04-12_<uuid>.json
@@ -264,9 +303,9 @@ keeping data private while maintaining full skill portability.
 
 <required>
 
-- [MUST] Stream LLM responses with minimal latency (no buffering beyond SSE chunk boundaries)
+- [MUST] Display first token within 200ms of SSE stream start (no buffering beyond chunk boundaries)
 - [MUST] Keep skill catalog injection under 100 tokens per skill
-- [SHOULD] Sandbox startup overhead under 200ms for bwrap/nsjail backends
+- [SHOULD] Sandbox startup overhead under 500ms for container backends, under 200ms for process-isolation backends
 - [SHOULD] Total dependency footprint under 50 MB (no heavyweight ML frameworks)
 
 </required>
@@ -290,7 +329,8 @@ keeping data private while maintaining full skill portability.
 - [MUST] Run on macOS and Linux
 - [MUST] Use only Python 3.12+ standard library features (no 3.13+ exclusives)
 - [MUST] Skills are portable across any agentskills.io-compliant agent
-- [SHOULD] Sandbox backends degrade gracefully per platform (bwrap Linux-only, noop fallback on macOS)
+- [MUST] Provide functional container-based sandbox on both macOS and Linux
+- [SHOULD] Auto-detect the strongest available backend per platform
 
 </required>
 
@@ -298,7 +338,7 @@ keeping data private while maintaining full skill portability.
 
 ### 4.1 Project Structure
 
-```
+```text
 stoiquent/
 +-- pyproject.toml
 +-- stoiquent.toml                 # Default config
@@ -331,12 +371,14 @@ stoiquent/
 |   +-- sandbox/
 |   |   +-- __init__.py
 |   |   +-- base.py                # SandboxBackend ABC + SandboxResult
-|   |   +-- detect.py              # Auto-detect available backends
-|   |   +-- bwrap.py               # Bubblewrap backend
-|   |   +-- gvisor.py              # gVisor backend
-|   |   +-- firecracker.py         # Firecracker backend
-|   |   +-- nsjail.py              # nsjail backend
-|   |   +-- noop.py                # No-op passthrough (dev mode)
+|   |   +-- detect.py              # Auto-detect available backends (see flowchart)
+|   |   +-- oci.py                 # OCI container backend (podman/finch/docker)
+|   |   +-- apple_container.py     # Apple Containers backend (macOS 26+)
+|   |   +-- firecracker.py         # Firecracker microVM backend (Linux + KVM)
+|   |   +-- gvisor.py              # gVisor runsc OCI runtime (Linux)
+|   |   +-- bwrap.py               # Bubblewrap process isolation (Linux)
+|   |   +-- nsjail.py              # nsjail process isolation (Linux)
+|   |   +-- noop.py                # No-op passthrough (dev mode, warns)
 |   |   +-- policy.py              # Resource limits, network, filesystem policy
 |   +-- persistence/
 |   |   +-- __init__.py
@@ -361,6 +403,8 @@ stoiquent/
 ### 4.2 Data Models (Pydantic v2)
 
 ```python
+from pydantic import BaseModel, Field
+
 class SkillMeta(BaseModel):
     name: str                              # kebab-case, max 64 chars
     description: str                       # max 1024 chars
@@ -371,19 +415,19 @@ class SkillMeta(BaseModel):
 
 class MCPAppConfig(BaseModel):
     resource: str                          # e.g. "assets/app.html"
-    permissions: list[str] = []            # iframe permissions
-    csp: list[str] = []                    # allowed external origins
+    permissions: list[str] = Field(default_factory=list)
+    csp: list[str] = Field(default_factory=list)
 
 class Skill(BaseModel):
     meta: SkillMeta
     instructions: str                      # markdown body
     path: Path                             # absolute path to skill directory
-    scripts: list[Path] = []              # discovered scripts
-    mcp_app: MCPAppConfig | None = None   # optional MCP App config
-    mcp_config: dict | None = None        # optional MCP server config
+    scripts: list[Path] = Field(default_factory=list)
+    mcp_app: MCPAppConfig | None = None    # optional MCP App config
+    mcp_config: dict | None = None         # optional MCP server config
 
 class Message(BaseModel):
-    role: str                             # system | user | assistant | tool
+    role: str                              # system | user | assistant | tool
     content: str
     reasoning: str | None = None
     tool_calls: list[ToolCall] | None = None
@@ -395,13 +439,14 @@ class ToolCall(BaseModel):
     arguments: dict
 
 class SandboxPolicy(BaseModel):
-    max_cpu_seconds: float = 30.0
+    max_cpu_seconds: float = 120.0
     max_memory_mb: int = 512
     max_disk_mb: int = 100
     max_pids: int = 64
     network: Literal["none", "egress_only", "full"] = "none"
-    writable_paths: list[Path] = []
-    readonly_bind_mounts: dict[str, str] = {}
+    environment: Literal["container", "process", "none"] = "container"
+    writable_paths: list[Path] = Field(default_factory=list)
+    readonly_bind_mounts: dict[str, str] = Field(default_factory=dict)
 
 class SandboxResult(BaseModel):
     exit_code: int
@@ -443,8 +488,10 @@ supports_reasoning = true
 paths = ["~/.agents/skills", "~/.stoiquent/skills"]
 
 [sandbox]
-backend = "auto"          # "auto" | "bwrap" | "gvisor" | "firecracker" | "nsjail" | "none"
-default_timeout = 30.0
+backend = "auto"          # "auto" | "podman" | "finch" | "docker" | "apple-container" | "firecracker" | "gvisor" | "bwrap" | "nsjail" | "none"
+container_runtime = "auto" # "auto" | "podman" | "finch" | "docker"
+tool_timeout = 300.0      # per-tool-call wall-clock timeout (seconds)
+max_cpu_seconds = 120     # sandbox CPU time cap (seconds)
 default_memory_mb = 512
 default_network = "none"  # "none" | "egress_only" | "full"
 
@@ -454,39 +501,21 @@ data_dir = "~/.local/share/stoiquent"
 
 ### 4.4 Data Flow
 
-```
-User message (NiceGUI chat input)
-    |
-    v
-agent/loop.py: run_agent_loop(session, message, on_chunk)
-    |
-    v
-agent/context.py: build_messages(session)
-    --> system prompt + skill catalog + active skill body + tool schemas + history
-    |
-    v
-llm/openai_compat.py: stream(messages, tools)
-    --> SSE to Ollama / OpenAI-compatible endpoint
-    |
-    v
-llm/reasoning.py: extract_reasoning(content, reasoning_content)
-    --> split chain-of-thought from final answer
-    |
-    v
-Response has tool_calls?
-    |yes                          |no
-    v                              v
-agent/tool_dispatch.py            Append final response
-    |                              Save conversation
-    v                              Update UI
-sandbox/detect.py -> backend
-    |
-    v
-sandbox/<backend>.py: execute(command, policy)
-    |
-    v
-Append tool results to history
-Loop back to llm/stream()
+```mermaid
+flowchart TD
+    A[User message via NiceGUI chat] --> B["agent/loop.py\nrun_agent_loop(session, message, on_chunk)"]
+    B --> C["agent/context.py\nbuild_messages(session)"]
+    C --> D["system prompt + skill catalog\n+ active skill body + tool schemas\n+ conversation history"]
+    D --> E["llm/openai_compat.py\nstream(messages, tools) via httpx SSE"]
+    E --> F["llm/reasoning.py\nextract chain-of-thought"]
+    F --> G{Response has tool_calls?}
+    G -- Yes --> H["agent/tool_dispatch.py\nparse and dispatch tool calls"]
+    H --> I["sandbox/detect.py -> backend\nsandbox/backend.execute(cmd, policy)"]
+    I --> J[Append tool results to history]
+    J --> E
+    G -- No --> K[Append final response]
+    K --> L[Save conversation to JSON]
+    L --> M[Update NiceGUI UI]
 ```
 
 ### 4.5 Key Design Decisions
@@ -502,7 +531,7 @@ Loop back to llm/stream()
 | Skill paths | `.stoiquent/skills/` + `.agents/skills/` | Client-specific + cross-client interop |
 | Data models | Pydantic v2 | Validation, serialization, schema generation |
 | CLI | Click | Subcommands: run, serve, list-skills |
-| Sandbox default | bubblewrap (CLI) / gVisor (server) | Auto-detected, strongest available |
+| Sandbox default | Podman rootless (cross-platform) / Apple Containers (macOS 26+) / Firecracker (Linux production) | Auto-detected, strongest available |
 | MCP Apps | `ui://` resources from `assets/` | Interactive skill UIs per MCP Apps spec |
 
 ## 5. Dependencies
@@ -557,7 +586,7 @@ stoiquent = "stoiquent.cli:main"
 - [ ] `skills/loader.py` - discover skills, parse SKILL.md
 - [ ] `skills/catalog.py` - Tier 1 catalog
 - [ ] `sandbox/base.py` + `sandbox/policy.py` - ABC + policy models
-- [ ] `sandbox/detect.py` + `sandbox/noop.py` + `sandbox/bwrap.py` - detection + backends
+- [ ] `sandbox/detect.py` + `sandbox/noop.py` + `sandbox/oci.py` - detection + OCI container backend
 - [ ] `skills/executor.py` - script execution through sandbox
 - [ ] `agent/tool_dispatch.py` - parse tool calls, dispatch through sandbox
 - [ ] Update `agent/context.py` + `agent/loop.py` - catalog injection, tool loop
@@ -587,7 +616,7 @@ stoiquent = "stoiquent.cli:main"
 
 ### Phase 6: Additional Sandbox Backends + Polish
 
-- [ ] `sandbox/gvisor.py` + `sandbox/firecracker.py` + `sandbox/nsjail.py`
+- [ ] `sandbox/apple_container.py` + `sandbox/firecracker.py` + `sandbox/gvisor.py` + `sandbox/bwrap.py` + `sandbox/nsjail.py`
 - [ ] Streaming SSE in `openai_compat.py`
 - [ ] Native window mode testing
 - [ ] Error handling: LLM timeouts, script failures, sandbox escapes, MCP disconnects
@@ -605,13 +634,4 @@ stoiquent = "stoiquent.cli:main"
 
 ## 8. References
 
-- [agentskills.io Specification](https://agentskills.io/specification)
-- [agentskills.io Client Implementation Guide](https://agentskills.io/client-implementation/adding-skills-support)
-- [agentskills.io Using Scripts in Skills](https://agentskills.io/skill-creation/using-scripts)
-- [MCP Apps Overview](https://modelcontextprotocol.io/extensions/apps/overview)
-- [Nanobot Agent Loop](https://github.com/HKUDS/nanobot/blob/main/nanobot/agent/loop.py) (reference architecture)
-- [NiceGUI Documentation](https://nicegui.io/documentation)
-- [Claude Cowork](https://www.anthropic.com/product/claude-cowork) (UX inspiration)
-- [bubblewrap](https://github.com/containers/bubblewrap) (recommended CLI sandbox)
-- [gVisor](https://gvisor.dev/) (recommended server sandbox)
-- [Firecracker](https://firecracker-microvm.github.io/) (production multi-tenant sandbox)
+See [1.2 References](#12-references) for the complete list.
