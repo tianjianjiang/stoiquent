@@ -1,11 +1,12 @@
-# Stoiquent - Requirements and Specifications
+# Stoiquent - Requirements
 
 <metadata>
 
-- **Version**: 0.2.0
-- **Date**: 2026-04-12T19:30:00+09:00
+- **Version**: 0.3.0
+- **Date**: 2026-04-12T21:00:00+09:00
 - **Status**: Draft
 - **Stakeholders**: Mike Tian-Jian Jiang (sole developer, personal tool)
+- **Design**: See [design.md](design.md) for architecture and implementation decisions
 
 </metadata>
 
@@ -226,80 +227,7 @@ Inspired by [Claude Cowork](https://www.anthropic.com/product/claude-cowork) (UX
 
 </required>
 
-## 4. Architecture
-
-### 4.1 Components
-
-```text
-stoiquent/
-+-- stoiquent/
-|   +-- config.py, models.py, app.py, cli.py
-|   +-- agent/       loop.py, context.py, tool_dispatch.py, session.py
-|   +-- llm/         provider.py, openai_compat.py, reasoning.py
-|   +-- skills/      loader.py, catalog.py, executor.py,
-|   |                mcp_bridge.py, mcp_app.py, mcp_server.py
-|   +-- sandbox/     base.py, detect.py, policy.py, oci.py,
-|   |                apple_container.py, firecracker.py, gvisor.py,
-|   |                bwrap.py, nsjail.py, noop.py
-|   +-- persistence/ conversations.py, tasks.py
-|   +-- ui/          layout.py, chat.py, files.py, tasks.py, skills_panel.py
-+-- skills/hello-world/SKILL.md
-+-- tests/
-```
-
-### 4.2 Configuration (`stoiquent.toml`)
-
-```toml
-[ui]
-mode = "native"                    # "native" | "browser"
-
-[llm]
-default = "local-qwen"
-
-[llm.providers.local-qwen]
-type = "openai"
-base_url = "http://localhost:11434/v1"
-model = "qwen3:32b"
-api_key = ""
-supports_reasoning = true
-native_tools = true                # false = prompt-based fallback
-
-[skills]
-paths = ["~/.agents/skills", "~/.stoiquent/skills"]
-
-[sandbox]
-backend = "auto"                   # "auto" | "podman" | "finch" | ... | "none"
-container_runtime = "auto"         # "auto" | "podman" | "finch" | "docker"
-tool_timeout = 300.0               # per-tool-call wall-clock (seconds)
-
-[persistence]
-data_dir = "~/.stoiquent"
-```
-
-### 4.3 Data Flow
-
-```mermaid
-flowchart TD
-    A[User message] --> B[Agent loop]
-    B --> C[Build context]
-    C --> D[LLM stream via httpx]
-    D --> E[Extract reasoning]
-    E --> F{Tool calls?}
-    F -- Yes --> G[Dispatch through sandbox]
-    G --> H[Append results]
-    H --> D
-    F -- No --> I[Save + display response]
-```
-
-### 4.4 Key Rationale
-
-| Decision | Rationale |
-|----------|-----------|
-| Skills only, no built-in tools | Pure agent runtime; all capabilities portable |
-| JSON file persistence | Personal tool; simpler than SQLite to debug/backup |
-| MCP deps in SKILL.md metadata | Skills self-declare dependencies; auto-started on activation |
-
-## 5. Acceptance Criteria
+## 4. Acceptance Criteria
 
 - **Walking skeleton**: `uv run stoiquent run` launches NiceGUI; chat round-trip with Ollama works
 - **Skills + sandbox**: Activate skill with script, trigger tool use, verify sandboxed execution
