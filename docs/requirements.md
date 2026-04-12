@@ -191,7 +191,7 @@ Inspired by [Claude Cowork](https://www.anthropic.com/product/claude-cowork) (UX
 <required>
 
 - [MUST] JSON files: one per conversation session, single task list
-- [MUST] Data directory: `~/.local/share/stoiquent/`, configurable via `persistence.data_dir`
+- [MUST] Data directory: `~/.stoiquent/`, configurable via `persistence.data_dir`
 - [MUST] Auto-save after each message exchange
 - [MUST] List and load past conversations in sidebar
 
@@ -273,7 +273,7 @@ container_runtime = "auto"         # "auto" | "podman" | "finch" | "docker"
 tool_timeout = 300.0               # per-tool-call wall-clock (seconds)
 
 [persistence]
-data_dir = "~/.local/share/stoiquent"
+data_dir = "~/.stoiquent"
 ```
 
 ### 4.3 Data Flow
