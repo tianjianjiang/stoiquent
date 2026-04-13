@@ -14,7 +14,7 @@ def _ollama_available() -> bool:
     try:
         resp = httpx.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=3.0)
         return resp.status_code == 200
-    except httpx.ConnectError:
+    except httpx.HTTPError:
         return False
 
 
@@ -23,7 +23,7 @@ def _model_available() -> bool:
         resp = httpx.get(f"{OLLAMA_BASE_URL}/api/tags", timeout=3.0)
         models = resp.json().get("models", [])
         return any(m.get("name", "").startswith(OLLAMA_MODEL) for m in models)
-    except (httpx.ConnectError, ValueError):
+    except (httpx.HTTPError, ValueError):
         return False
 
 

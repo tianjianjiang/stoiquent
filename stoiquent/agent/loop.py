@@ -30,18 +30,19 @@ async def run_agent_loop(
                 api_reasoning += chunk.reasoning_delta
             await on_chunk(chunk)
     finally:
-        if api_reasoning:
-            final_reasoning = api_reasoning
-            final_content = raw_content or None
-        else:
-            final_content, final_reasoning = extract_reasoning(raw_content)
-            final_content = final_content or None
-            final_reasoning = final_reasoning or None
+        if raw_content or api_reasoning:
+            if api_reasoning:
+                final_reasoning = api_reasoning
+                final_content = raw_content or None
+            else:
+                final_content, final_reasoning = extract_reasoning(raw_content)
+                final_content = final_content or None
+                final_reasoning = final_reasoning or None
 
-        session.messages.append(
-            Message(
-                role="assistant",
-                content=final_content,
-                reasoning=final_reasoning,
+            session.messages.append(
+                Message(
+                    role="assistant",
+                    content=final_content,
+                    reasoning=final_reasoning,
+                )
             )
-        )

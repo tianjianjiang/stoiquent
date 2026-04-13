@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from stoiquent.agent.loop import run_agent_loop
+from stoiquent.agent.loop import OnChunkCallback, run_agent_loop
 from stoiquent.agent.session import Session
 from stoiquent.models import Message, StreamChunk
 
@@ -14,7 +14,7 @@ async def _async_noop(_chunk: StreamChunk) -> None:
     pass
 
 
-def _async_append(target: list[StreamChunk]):
+def _async_append(target: list[StreamChunk]) -> OnChunkCallback:
     async def _cb(chunk: StreamChunk) -> None:
         target.append(chunk)
     return _cb
@@ -87,19 +87,20 @@ async def test_should_use_api_reasoning_when_present() -> None:
 
 
 @pytest.mark.asyncio
-async def test_should_handle_empty_response() -> None:
+async def test_should_not_append_message_for_empty_response() -> None:
     provider = FakeProvider(chunks=[StreamChunk(finish_reason="stop")])
     session = Session(provider=provider)
     await run_agent_loop(session, "Hi", _async_noop)
 
-    assert len(session.messages) == 2
-    assert session.messages[1].content is None
-    assert session.messages[1].reasoning is None
+    assert len(session.messages) == 1
+    assert session.messages[0].role == "user"
 
 
 @pytest.mark.asyncio
 async def test_should_append_message_even_on_stream_error() -> None:
-    async def failing_stream(messages, tools=None):
+    async def failing_stream(
+        messages: list[Message], tools: list[dict] | None = None,
+    ) -> AsyncIterator[StreamChunk]:
         yield StreamChunk(content_delta="partial ")
         raise ConnectionError("lost connection")
 
@@ -113,6 +114,25 @@ async def test_should_append_message_even_on_stream_error() -> None:
     assert len(session.messages) == 2
     assert session.messages[1].role == "assistant"
     assert session.messages[1].content == "partial "
+
+
+@pytest.mark.asyncio
+async def test_should_not_append_ghost_message_on_immediate_error() -> None:
+    async def failing_stream(
+        messages: list[Message], tools: list[dict] | None = None,
+    ) -> AsyncIterator[StreamChunk]:
+        raise ConnectionError("connection refused")
+        yield  # make it a generator  # noqa: RUF027
+
+    provider = FakeProvider()
+    provider.stream = failing_stream  # type: ignore[assignment]
+    session = Session(provider=provider)
+
+    with pytest.raises(ConnectionError):
+        await run_agent_loop(session, "Hi", _async_noop)
+
+    assert len(session.messages) == 1
+    assert session.messages[0].role == "user"
 
 
 @pytest.mark.asyncio

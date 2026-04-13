@@ -29,7 +29,7 @@ class StreamChunk(BaseModel):
 class ProviderConfig(BaseModel):
     type: Literal["openai"] = "openai"
     base_url: str = Field(min_length=1)
-    model: str
+    model: str = Field(min_length=1)
     api_key: str = ""
     max_tokens: int = Field(default=8192, gt=0)
     supports_reasoning: bool = False

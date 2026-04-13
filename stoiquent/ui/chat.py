@@ -16,6 +16,7 @@ class ChatPanel:
         self.session = session
         self._messages_container: ui.column | None = None
         self._input: ui.input | None = None
+        self._sending: bool = False
 
     def render(self) -> None:
         with ui.column().classes("w-full flex-grow gap-0"):
@@ -31,6 +32,8 @@ class ChatPanel:
                 ui.button("Send", on_click=self._send).props("flat")
 
     async def _send(self) -> None:
+        if self._sending:
+            return
         if not self._input or not self._input.value:
             return
 
@@ -39,6 +42,7 @@ class ChatPanel:
             return
 
         self._input.value = ""
+        self._sending = True
 
         if self._messages_container is None:
             raise RuntimeError("ChatPanel.render() must be called before _send()")
@@ -86,6 +90,7 @@ class ChatPanel:
                 "**Error:** An unexpected error occurred. Check logs for details."
             )
         finally:
+            self._sending = False
             self._messages_container.remove(spinner)
 
         ui.run_javascript("window.scrollTo(0, document.body.scrollHeight)")

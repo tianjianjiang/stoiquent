@@ -48,8 +48,8 @@ async def test_should_raise_on_connection_refused() -> None:
     with pytest.raises(ConnectionError, match="Cannot connect"):
         await run_agent_loop(session, "hello", noop)
 
-    # Session should still have both messages (try/finally in loop)
-    assert len(session.messages) == 2
-    assert session.messages[1].role == "assistant"
+    # No ghost assistant message -- connection failed before any content
+    assert len(session.messages) == 1
+    assert session.messages[0].role == "user"
 
     await provider.close()
