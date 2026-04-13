@@ -112,8 +112,13 @@ def _parse_sse_line(line: str, supports_reasoning: bool) -> StreamChunk | None:
     content_delta = delta.get("content", "")
     reasoning_delta = ""
 
-    if supports_reasoning and "reasoning_content" in delta:
-        reasoning_delta = delta["reasoning_content"] or ""
+    if supports_reasoning:
+        raw_reasoning = (
+            delta.get("reasoning_content")
+            or delta.get("reasoning")
+            or ""
+        )
+        reasoning_delta = raw_reasoning
 
     tool_calls_delta = delta.get("tool_calls")
 

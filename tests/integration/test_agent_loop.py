@@ -18,7 +18,7 @@ async def test_agent_loop_with_ollama() -> None:
     """
     config = ProviderConfig(
         base_url="http://localhost:11434/v1",
-        model="qwen3:0.6b",
+        model="deepseek-r1:1.5b",
         supports_reasoning=True,
     )
     provider = OpenAICompatProvider(config)
