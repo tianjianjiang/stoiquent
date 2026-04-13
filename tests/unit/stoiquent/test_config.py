@@ -71,3 +71,14 @@ def test_should_use_empty_string_for_missing_env_var(
     monkeypatch.delenv("TEST_API_KEY", raising=False)
     config = load_config(tmp_config_file)
     assert config.providers["test-provider"].api_key == ""
+
+
+def test_should_raise_system_exit_on_permission_error(tmp_path: Path) -> None:
+    config_file = tmp_path / "stoiquent.toml"
+    config_file.write_text("[ui]\nmode = 'browser'\n")
+    config_file.chmod(0o000)
+    try:
+        with pytest.raises(SystemExit, match="Cannot read"):
+            load_config(config_file)
+    finally:
+        config_file.chmod(0o644)

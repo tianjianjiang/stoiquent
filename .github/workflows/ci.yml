@@ -34,17 +34,25 @@ jobs:
             --cov-config=pyproject.toml \
             --cov-append \
             --cov-report=term-missing \
-            --cov-report=xml:coverage.xml \
             -m integration \
             || true
+
+      - name: Run E2E tests with coverage (headless Chrome)
+        run: |
+          uv run pytest tests/e2e/ \
+            --cov=stoiquent \
+            --cov-config=pyproject.toml \
+            --cov-append \
+            --cov-report=term-missing \
+            --cov-report=xml:coverage.xml
 
       - name: Coverage comment on PR
         if: github.event_name == 'pull_request'
         uses: py-cov-action/python-coverage-comment-action@v3
         with:
           GITHUB_TOKEN: ${{ github.token }}
-          MINIMUM_GREEN: 80
-          MINIMUM_ORANGE: 60
+          MINIMUM_GREEN: 90
+          MINIMUM_ORANGE: 70
 
       - name: Enforce coverage threshold
-        run: uv run coverage report --fail-under=70
+        run: uv run coverage report --fail-under=90

@@ -1,3 +1,3 @@
-from stoiquent.cli import main
+from stoiquent.cli import main  # pragma: no cover
 
-main()
+main()  # pragma: no cover

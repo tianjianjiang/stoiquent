@@ -20,12 +20,14 @@ dev = [
     "pytest-asyncio>=0.23",
     "pytest-cov>=7.1.0",
     "coverage>=7.13.5",
+    "selenium>=4.0",
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests/unit", "tests/integration"]
+testpaths = ["tests/unit", "tests/integration", "tests/e2e"]
 markers = ["integration: requires Ollama running locally"]
 asyncio_mode = "auto"
+main_file = "tests/nicegui_main.py"
 
 [tool.coverage.run]
 source = ["stoiquent"]
