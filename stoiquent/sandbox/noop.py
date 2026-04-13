@@ -35,7 +35,7 @@ class NoopBackend(SandboxBackend):
             )
             _WARNED = True
 
-        effective_timeout = timeout or policy.cpu_seconds
+        effective_timeout = timeout if timeout is not None else policy.cpu_seconds
         start = time.monotonic()
 
         try:

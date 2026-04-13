@@ -86,6 +86,31 @@ def test_should_build_uv_run_for_pep723_without_shebang(tmp_path: Path) -> None:
     assert cmd == ["uv", "run", str(script)]
 
 
+def test_should_reject_path_traversal(tmp_path: Path) -> None:
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    (scripts / "legit.py").write_text("print('hi')")
+    result = resolve_script(tmp_path, "../../etc/passwd")
+    assert result is None
+
+
+def test_should_build_python_command_from_full_path_shebang(tmp_path: Path) -> None:
+    script = tmp_path / "test.py"
+    script.write_text("#!/usr/bin/python3\nprint('hello')")
+    cmd = build_command(script)
+    assert cmd == ["python3", str(script)]
+
+
+def test_should_resolve_by_sorted_order(tmp_path: Path) -> None:
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    (scripts / "tool.py").write_text("print('py')")
+    (scripts / "tool.sh").write_text("echo sh")
+    result = resolve_script(tmp_path, "tool")
+    assert result is not None
+    assert result.name == "tool.py"
+
+
 def test_should_handle_unreadable_shebang(tmp_path: Path) -> None:
     script = tmp_path / "test.py"
     script.write_text("print('hello')")

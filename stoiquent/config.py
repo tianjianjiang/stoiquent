@@ -79,10 +79,10 @@ def load_config(path: Path | None = None) -> AppConfig:
         _interpolate_dict(prov_data)
         providers[name] = ProviderConfig(**prov_data)
 
-    skills_config = SkillsConfig(**raw.get("skills", {}))
-    sandbox_config = SandboxConfig(**raw.get("sandbox", {}))
-    persistence_config = PersistenceConfig(**raw.get("persistence", {}))
-    agent_config = AgentConfig(**raw.get("agent", {}))
+    skills_config = SkillsConfig(**_interpolate_dict(raw.get("skills", {})))
+    sandbox_config = SandboxConfig(**_interpolate_dict(raw.get("sandbox", {})))
+    persistence_config = PersistenceConfig(**_interpolate_dict(raw.get("persistence", {})))
+    agent_config = AgentConfig(**_interpolate_dict(raw.get("agent", {})))
 
     return AppConfig(
         ui=ui_config,

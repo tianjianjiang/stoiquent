@@ -14,10 +14,10 @@ def resolve_script(skill_path: Path, script_name: str) -> Path | None:
         return None
 
     candidate = scripts_dir / script_name
-    if candidate.is_file():
+    if candidate.is_file() and _is_within(candidate, scripts_dir):
         return candidate
 
-    for entry in scripts_dir.iterdir():
+    for entry in sorted(scripts_dir.iterdir()):
         if entry.stem == script_name and entry.is_file():
             return entry
 
@@ -30,7 +30,8 @@ def build_command(script_path: Path) -> list[str]:
 
     if shebang:
         parts = shebang.split()
-        if parts[-1] == "python3" or parts[-1] == "python":
+        interpreter = Path(parts[-1]).name
+        if interpreter in ("python3", "python"):
             if _has_pep723_metadata(script_path):
                 return ["uv", "run", str(script_path)]
             return ["python3", str(script_path)]
@@ -63,6 +64,14 @@ def _has_pep723_metadata(path: Path) -> bool:
         text = path.read_text(encoding="utf-8")
         return "# /// script" in text
     except OSError:
+        return False
+
+
+def _is_within(path: Path, parent: Path) -> bool:
+    try:
+        path.resolve().relative_to(parent.resolve())
+        return True
+    except ValueError:
         return False
 
 

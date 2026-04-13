@@ -25,6 +25,20 @@ async def dispatch_tool_call(
     Returns the tool result as a string. Never raises -- errors are
     returned as descriptive strings so the LLM can see them.
     """
+    try:
+        return await _execute_tool(tool_call, catalog, sandbox, policy, timeout)
+    except Exception as e:
+        logger.exception("Unexpected error dispatching tool '%s'", tool_call.name)
+        return f"Error: Unexpected failure in '{tool_call.name}': {e}"
+
+
+async def _execute_tool(
+    tool_call: ToolCall,
+    catalog: SkillCatalog,
+    sandbox: SandboxBackend,
+    policy: SandboxPolicy,
+    timeout: float,
+) -> str:
     skill, tool_def = _find_tool(catalog, tool_call.name)
     if skill is None or tool_def is None:
         return f"Error: Unknown tool '{tool_call.name}'"
@@ -50,12 +64,12 @@ async def dispatch_tool_call(
         return f"Error: Tool '{tool_call.name}' timed out after {timeout}s"
 
     if result.exit_code != 0:
-        output = result.stderr.strip() or result.stdout.strip()
+        output = (result.stderr or "").strip() or (result.stdout or "").strip()
         return f"Error (exit {result.exit_code}): {output}" if output else (
             f"Error: Tool '{tool_call.name}' failed with exit code {result.exit_code}"
         )
 
-    return result.stdout
+    return result.stdout or ""
 
 
 def _find_tool(

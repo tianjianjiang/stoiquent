@@ -14,7 +14,8 @@ logger = logging.getLogger(__name__)
 def discover_skills(config: SkillsConfig) -> dict[str, Skill]:
     """Discover skills from all configured paths.
 
-    Priority: project-level > user-level > config paths.
+    Priority: project-level (.agents/skills/, .stoiquent/skills/) >
+    config paths (skills.paths, which default to user-level dirs).
     First discovery wins on name collision.
     """
     skills: dict[str, Skill] = {}
