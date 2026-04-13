@@ -11,16 +11,36 @@ dependencies = [
     "click>=8.0",
 ]
 
-[project.optional-dependencies]
-dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
-
 [project.scripts]
 stoiquent = "stoiquent.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=7.1.0",
+    "coverage>=7.13.5",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests/unit", "tests/integration"]
 markers = ["integration: requires Ollama running locally"]
 asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["stoiquent"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.",
+]
+
+[tool.coverage.html]
+directory = "htmlcov"
 
 [build-system]
 requires = ["hatchling"]

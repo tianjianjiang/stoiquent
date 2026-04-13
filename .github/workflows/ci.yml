@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Run unit tests with coverage
+        run: |
+          uv run pytest tests/unit/ \
+            --cov=stoiquent \
+            --cov-config=pyproject.toml \
+            --cov-report=term-missing
+
+      - name: Run integration tests with coverage (append)
+        run: |
+          uv run pytest tests/integration/ \
+            --cov=stoiquent \
+            --cov-config=pyproject.toml \
+            --cov-append \
+            --cov-report=term-missing \
+            --cov-report=xml:coverage.xml \
+            -m integration \
+            || true
+
+      - name: Coverage comment on PR
+        if: github.event_name == 'pull_request'
+        uses: py-cov-action/python-coverage-comment-action@v3
+        with:
+          GITHUB_TOKEN: ${{ github.token }}
+          MINIMUM_GREEN: 80
+          MINIMUM_ORANGE: 60
+
+      - name: Enforce coverage threshold
+        run: uv run coverage report --fail-under=70
