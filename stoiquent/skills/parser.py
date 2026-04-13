@@ -59,12 +59,18 @@ def _split_frontmatter(text: str) -> tuple[str | None, str]:
         return None, text
 
     after_first = stripped[len(_FRONTMATTER_FENCE) :]
-    end_idx = after_first.find(f"\n{_FRONTMATTER_FENCE}")
-    if end_idx == -1:
+    fence_pattern = f"\n{_FRONTMATTER_FENCE}"
+    end_idx = after_first.find(fence_pattern)
+    while end_idx != -1:
+        after_fence = after_first[end_idx + len(fence_pattern) :]
+        if not after_fence or after_fence[0] in ("\n", "\r"):
+            break
+        end_idx = after_first.find(fence_pattern, end_idx + 1)
+    else:
         return None, text
 
     frontmatter = after_first[:end_idx].strip()
-    body_start = end_idx + len(f"\n{_FRONTMATTER_FENCE}")
+    body_start = end_idx + len(fence_pattern)
     body = after_first[body_start:]
 
     return frontmatter, body

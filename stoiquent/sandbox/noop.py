@@ -9,14 +9,15 @@ from stoiquent.sandbox.models import SandboxPolicy, SandboxResult
 
 logger = logging.getLogger(__name__)
 
-_WARNED = False
-
 
 class NoopBackend(SandboxBackend):
     """Direct execution backend with no isolation.
 
     Only enforces timeout. Suitable for development and testing.
     """
+
+    def __init__(self) -> None:
+        self._warned = False
 
     async def execute(
         self,
@@ -27,13 +28,12 @@ class NoopBackend(SandboxBackend):
         stdin: str | None = None,
         timeout: float | None = None,
     ) -> SandboxResult:
-        global _WARNED  # noqa: PLW0603
-        if not _WARNED:
+        if not self._warned:
             logger.warning(
                 "Running in noop sandbox mode -- no process isolation. "
                 "Configure a sandbox backend for production use."
             )
-            _WARNED = True
+            self._warned = True
 
         effective_timeout = timeout if timeout is not None else policy.cpu_seconds
         start = time.monotonic()
@@ -73,6 +73,13 @@ class NoopBackend(SandboxBackend):
             return SandboxResult(
                 exit_code=127,
                 stderr=f"Command not found: {command[0]}",
+                wall_time_seconds=wall_time,
+            )
+        except OSError as e:
+            wall_time = time.monotonic() - start
+            return SandboxResult(
+                exit_code=126,
+                stderr=f"Cannot execute command: {e}",
                 wall_time_seconds=wall_time,
             )
 

@@ -4,14 +4,8 @@ import sys
 
 import pytest
 
-import stoiquent.sandbox.noop as noop_module
 from stoiquent.sandbox.models import SandboxPolicy
 from stoiquent.sandbox.noop import NoopBackend
-
-
-@pytest.fixture(autouse=True)
-def _reset_warning() -> None:
-    noop_module._WARNED = False
 
 
 @pytest.mark.asyncio

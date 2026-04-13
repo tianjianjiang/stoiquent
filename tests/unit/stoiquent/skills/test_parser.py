@@ -78,6 +78,13 @@ def test_should_handle_empty_body(tmp_path: Path) -> None:
     assert body == ""
 
 
+def test_should_reject_partial_closing_fence(tmp_path: Path) -> None:
+    skill_md = tmp_path / "SKILL.md"
+    skill_md.write_text("---\nname: test\ndescription: A test\n---extra\nBody")
+    result = parse_skill_md(skill_md)
+    assert result is None
+
+
 def test_should_allow_extra_fields_in_frontmatter(tmp_path: Path) -> None:
     skill_md = tmp_path / "SKILL.md"
     skill_md.write_text(

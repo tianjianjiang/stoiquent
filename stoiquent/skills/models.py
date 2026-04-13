@@ -39,6 +39,7 @@ class SkillMeta(BaseModel):
 
 
 class Skill(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     meta: SkillMeta
     path: Path
     instructions: str = ""

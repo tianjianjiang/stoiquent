@@ -93,7 +93,10 @@ def _accumulate_tool_calls(
             entry["id"] = delta["id"]
         func_delta = delta.get("function", {})
         if "name" in func_delta and func_delta["name"]:
-            entry["function"]["name"] += func_delta["name"]
+            if not entry["function"]["name"]:
+                entry["function"]["name"] = func_delta["name"]
+            else:
+                entry["function"]["name"] += func_delta["name"]
         if "arguments" in func_delta:
             entry["function"]["arguments"] += func_delta["arguments"]
 
