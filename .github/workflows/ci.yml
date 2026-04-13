@@ -34,8 +34,7 @@ jobs:
             --cov-config=pyproject.toml \
             --cov-append \
             --cov-report=term-missing \
-            -m integration \
-            || true
+            -m integration
 
       - name: Run E2E tests with coverage (headless Chrome)
         run: |

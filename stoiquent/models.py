@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal, Self
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class ToolCall(BaseModel):
@@ -27,6 +27,7 @@ class StreamChunk(BaseModel):
 
 
 class ProviderConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     type: Literal["openai"] = "openai"
     base_url: str = Field(min_length=1)
     model: str = Field(min_length=1)
@@ -37,6 +38,7 @@ class ProviderConfig(BaseModel):
 
 
 class UIConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     mode: Literal["native", "browser"] = "native"
     host: str = "127.0.0.1"
     port: int = Field(default=8080, ge=1, le=65535)
