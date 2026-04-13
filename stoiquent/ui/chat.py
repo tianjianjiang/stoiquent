@@ -91,9 +91,6 @@ class ChatPanel:
             )
         finally:
             self._sending = False
-            try:
-                self._messages_container.remove(spinner)
-            except (ValueError, AttributeError):  # pragma: no cover
-                pass
+            spinner.set_visibility(False)
 
         ui.run_javascript("window.scrollTo(0, document.body.scrollHeight)")
