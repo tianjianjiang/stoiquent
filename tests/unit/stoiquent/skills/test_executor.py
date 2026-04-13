@@ -77,3 +77,21 @@ def test_should_detect_python_suffix_without_shebang(tmp_path: Path) -> None:
     script.write_text("print('hello')")
     cmd = build_command(script)
     assert cmd == ["python3", str(script)]
+
+
+def test_should_build_uv_run_for_pep723_without_shebang(tmp_path: Path) -> None:
+    script = tmp_path / "test.py"
+    script.write_text("# /// script\n# dependencies = ['requests']\n# ///\nimport requests\n")
+    cmd = build_command(script)
+    assert cmd == ["uv", "run", str(script)]
+
+
+def test_should_handle_unreadable_shebang(tmp_path: Path) -> None:
+    script = tmp_path / "test.py"
+    script.write_text("print('hello')")
+    script.chmod(0o000)
+    try:
+        cmd = build_command(script)
+        assert "python3" in cmd[0] or "sh" in cmd[0]
+    finally:
+        script.chmod(0o644)
