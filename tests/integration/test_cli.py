@@ -1,0 +1,33 @@
+from __future__ import annotations
+
+import pytest
+from click.testing import CliRunner
+
+from stoiquent.cli import main
+
+
+@pytest.mark.integration
+def test_should_show_help() -> None:
+    runner = CliRunner()
+    result = runner.invoke(main, ["--help"])
+    assert result.exit_code == 0
+    assert "Stoiquent" in result.output
+    assert "run" in result.output
+    assert "serve" in result.output
+    assert "list-skills" in result.output
+
+
+@pytest.mark.integration
+def test_should_show_list_skills_stub() -> None:
+    runner = CliRunner()
+    result = runner.invoke(main, ["list-skills"])
+    assert result.exit_code == 0
+    assert "Not implemented yet" in result.output
+
+
+@pytest.mark.integration
+def test_should_show_serve_stub() -> None:
+    runner = CliRunner()
+    result = runner.invoke(main, ["serve"])
+    assert result.exit_code == 0
+    assert "Not implemented yet" in result.output
