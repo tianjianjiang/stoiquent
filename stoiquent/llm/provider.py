@@ -8,7 +8,7 @@ from stoiquent.models import Message, StreamChunk
 
 @runtime_checkable
 class LLMProvider(Protocol):
-    def stream(
+    def stream(  # pragma: no cover
         self,
         messages: list[Message],
         tools: list[dict] | None = None,

@@ -94,3 +94,99 @@ async def test_should_reset_sending_flag_after_completion(user: User) -> None:
 
     # After completion, _sending should be reset
     assert panel._sending is False
+
+
+@pytest.mark.asyncio
+async def test_should_ignore_whitespace_only_input(user: User) -> None:
+    provider = FakeProvider()
+    session = Session(provider=provider)
+    panel = ChatPanel(session)
+
+    @ui.page("/test-whitespace")
+    async def page() -> None:
+        panel.render()
+
+    await user.open("/test-whitespace")
+    user.find("Type a message...").type("   ")
+    user.find("Send").click()
+
+    assert len(session.messages) == 0
+
+
+@pytest.mark.asyncio
+async def test_should_raise_when_render_not_called(user: User) -> None:
+    provider = FakeProvider()
+    session = Session(provider=provider)
+    panel = ChatPanel(session)
+    panel._input = type("FakeInput", (), {"value": "test"})()
+
+    with pytest.raises(RuntimeError, match="render"):
+        await panel._send()
+
+
+@pytest.mark.asyncio
+async def test_should_display_reasoning_expansion(user: User) -> None:
+    chunks = [
+        StreamChunk(reasoning_delta="Let me think..."),
+        StreamChunk(content_delta="The answer is 42."),
+        StreamChunk(finish_reason="stop"),
+    ]
+    provider = FakeProvider(chunks=chunks)
+    session = Session(provider=provider)
+    panel = ChatPanel(session)
+
+    @ui.page("/test-reasoning")
+    async def page() -> None:
+        panel.render()
+
+    await user.open("/test-reasoning")
+    user.find("Type a message...").type("What is the answer?")
+    user.find("Send").click()
+    await user.should_see("The answer is 42.")
+
+
+@pytest.mark.asyncio
+async def test_should_display_connection_error_message(user: User) -> None:
+    async def failing_stream(messages, tools=None):
+        raise ConnectionError("Cannot connect to LLM")
+        yield  # noqa: RUF027
+
+    provider = FakeProvider()
+    provider.stream = failing_stream  # type: ignore[assignment]
+    session = Session(provider=provider)
+    panel = ChatPanel(session)
+
+    @ui.page("/test-conn-err")
+    async def page() -> None:
+        panel.render()
+
+    await user.open("/test-conn-err")
+    user.find("Type a message...").type("Hello")
+    user.find("Send").click()
+    await user.should_see("Connection error")
+
+
+@pytest.mark.asyncio
+async def test_should_display_generic_error_message(
+    user: User, caplog: pytest.LogCaptureFixture
+) -> None:
+    async def exploding_stream(messages, tools=None):
+        raise ValueError("unexpected boom")
+        yield  # noqa: RUF027
+
+    provider = FakeProvider()
+    provider.stream = exploding_stream  # type: ignore[assignment]
+    session = Session(provider=provider)
+    panel = ChatPanel(session)
+
+    @ui.page("/test-generic-err")
+    async def page() -> None:
+        panel.render()
+
+    await user.open("/test-generic-err")
+    user.find("Type a message...").type("Hello")
+    user.find("Send").click()
+    await user.should_see("An unexpected error occurred")
+
+    # Clear ERROR logs so NiceGUI's teardown check does not fail
+    caplog.clear()

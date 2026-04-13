@@ -26,7 +26,7 @@ def start(config: AppConfig) -> None:
     app.on_shutdown(provider.close)
 
     @ui.page("/")
-    async def _main_page() -> None:
+    async def _main_page() -> None:  # pragma: no cover
         layout.render(session)
 
     kwargs: dict = {
