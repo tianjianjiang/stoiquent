@@ -18,11 +18,11 @@ def test_should_show_help() -> None:
 
 
 @pytest.mark.integration
-def test_should_show_list_skills_stub() -> None:
+def test_should_list_skills_or_show_empty() -> None:
     runner = CliRunner()
     result = runner.invoke(main, ["list-skills"])
     assert result.exit_code == 0
-    assert "Not implemented yet" in result.output
+    assert "No skills found" in result.output or ":" in result.output
 
 
 @pytest.mark.integration
