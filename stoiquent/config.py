@@ -6,7 +6,15 @@ import re
 import tomllib
 from pathlib import Path
 
-from stoiquent.models import AppConfig, ProviderConfig, UIConfig
+from stoiquent.models import (
+    AgentConfig,
+    AppConfig,
+    PersistenceConfig,
+    ProviderConfig,
+    SandboxConfig,
+    SkillsConfig,
+    UIConfig,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -71,8 +79,17 @@ def load_config(path: Path | None = None) -> AppConfig:
         _interpolate_dict(prov_data)
         providers[name] = ProviderConfig(**prov_data)
 
+    skills_config = SkillsConfig(**raw.get("skills", {}))
+    sandbox_config = SandboxConfig(**raw.get("sandbox", {}))
+    persistence_config = PersistenceConfig(**raw.get("persistence", {}))
+    agent_config = AgentConfig(**raw.get("agent", {}))
+
     return AppConfig(
         ui=ui_config,
         default_provider=default_provider,
         providers=providers,
+        skills=skills_config,
+        sandbox=sandbox_config,
+        persistence=persistence_config,
+        agent=agent_config,
     )

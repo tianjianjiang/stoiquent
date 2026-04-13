@@ -44,10 +44,38 @@ class UIConfig(BaseModel):
     port: int = Field(default=8080, ge=1, le=65535)
 
 
+class SkillsConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    paths: list[str] = Field(
+        default_factory=lambda: ["~/.agents/skills", "~/.stoiquent/skills"]
+    )
+
+
+class SandboxConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    backend: str = "auto"
+    container_runtime: str = "auto"
+    tool_timeout: float = Field(default=300.0, gt=0)
+
+
+class PersistenceConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    data_dir: str = "~/.stoiquent"
+
+
+class AgentConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    iteration_limit: int = Field(default=25, gt=0)
+
+
 class AppConfig(BaseModel):
     ui: UIConfig = Field(default_factory=UIConfig)
     default_provider: str = "local-qwen"
     providers: dict[str, ProviderConfig] = Field(default_factory=dict)
+    skills: SkillsConfig = Field(default_factory=SkillsConfig)
+    sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
+    persistence: PersistenceConfig = Field(default_factory=PersistenceConfig)
+    agent: AgentConfig = Field(default_factory=AgentConfig)
 
     @model_validator(mode="after")
     def _check_default_provider(self) -> Self:

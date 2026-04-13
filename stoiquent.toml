@@ -12,16 +12,19 @@ api_key = ""
 supports_reasoning = true
 native_tools = true                # false = prompt-based fallback
 
-# Phase 2+ placeholder — not yet consumed by the config loader
+# Phase 2+ — parsed by config loader, wired in Phase 2
 [skills]
 paths = ["~/.agents/skills", "~/.stoiquent/skills"]
 
-# Phase 2+ placeholder — not yet consumed by the config loader
+# Phase 2+ — parsed by config loader, wired in Phase 2
 [sandbox]
 backend = "auto"
 container_runtime = "auto"
 tool_timeout = 300.0
 
-# Phase 4+ placeholder — not yet consumed by the config loader
+# Phase 4+ — parsed by config loader, wired in Phase 4
 [persistence]
 data_dir = "~/.stoiquent"
+
+[agent]
+iteration_limit = 25
