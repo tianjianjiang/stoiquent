@@ -39,4 +39,13 @@ def serve() -> None:
 @main.command(name="list-skills")
 def list_skills() -> None:
     """List all discovered skills."""
-    click.echo("Not implemented yet (Phase 2)")
+    from stoiquent.config import load_config
+    from stoiquent.skills.discovery import discover_skills
+
+    config = load_config()
+    skills = discover_skills(config.skills)
+    if not skills:
+        click.echo("No skills found.")
+        return
+    for name, skill in sorted(skills.items()):
+        click.echo(f"  {name}: {skill.meta.description} [{skill.source}]")

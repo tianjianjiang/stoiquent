@@ -1,13 +1,23 @@
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import pytest
 
-from stoiquent.agent.loop import OnChunkCallback, run_agent_loop
+from stoiquent.agent.loop import (
+    OnChunkCallback,
+    _accumulate_tool_calls,
+    _parse_tool_calls,
+    run_agent_loop,
+)
 from stoiquent.agent.session import Session
 from stoiquent.models import Message, StreamChunk
+from stoiquent.sandbox.noop import NoopBackend
+from stoiquent.skills.catalog import SkillCatalog
+from stoiquent.skills.models import Skill, SkillMeta, SkillToolDef
 
 
 async def _async_noop(_chunk: StreamChunk) -> None:
@@ -148,3 +158,135 @@ async def test_should_invoke_callback_for_every_chunk() -> None:
     received: list[StreamChunk] = []
     await run_agent_loop(session, "Hi", _async_append(received))
     assert len(received) == 3
+
+
+def test_accumulate_tool_calls_single_delta() -> None:
+    accum: list[dict] = []
+    _accumulate_tool_calls(accum, [
+        {"index": 0, "id": "call_1", "function": {"name": "greet", "arguments": '{"na'}},
+    ])
+    _accumulate_tool_calls(accum, [
+        {"index": 0, "function": {"arguments": 'me":"A"}'}},
+    ])
+    assert len(accum) == 1
+    assert accum[0]["id"] == "call_1"
+    assert accum[0]["function"]["name"] == "greet"
+    assert accum[0]["function"]["arguments"] == '{"name":"A"}'
+
+
+def test_parse_tool_calls_valid() -> None:
+    accum = [
+        {"id": "call_1", "function": {"name": "greet", "arguments": '{"name":"Alice"}'}},
+    ]
+    result = _parse_tool_calls(accum)
+    assert len(result) == 1
+    assert result[0].id == "call_1"
+    assert result[0].name == "greet"
+    assert result[0].arguments == {"name": "Alice"}
+
+
+def test_parse_tool_calls_skips_incomplete() -> None:
+    accum = [
+        {"id": "", "function": {"name": "greet", "arguments": "{}"}},
+        {"id": "call_2", "function": {"name": "", "arguments": "{}"}},
+    ]
+    assert _parse_tool_calls(accum) == []
+
+
+def test_parse_tool_calls_handles_bad_json() -> None:
+    accum = [
+        {"id": "call_1", "function": {"name": "test", "arguments": "not json"}},
+    ]
+    result = _parse_tool_calls(accum)
+    assert len(result) == 1
+    assert result[0].arguments == {}
+
+
+@pytest.mark.asyncio
+async def test_should_dispatch_tool_calls_and_loop(tmp_path: Path) -> None:
+    """Full integration: LLM returns tool call, dispatch runs, LLM gets result."""
+    skill_dir = tmp_path / "hello"
+    scripts_dir = skill_dir / "scripts"
+    scripts_dir.mkdir(parents=True)
+    (scripts_dir / "greet.py").write_text(
+        "#!/usr/bin/env python3\nimport sys, json\n"
+        "args = json.loads(sys.argv[1]) if len(sys.argv) > 1 else {}\n"
+        "print(f\"Hello, {args.get('name', 'World')}!\")\n"
+    )
+
+    skill = Skill(
+        meta=SkillMeta(
+            name="hello",
+            description="Greeting",
+            tools=[SkillToolDef(name="greet", description="Greet")],
+        ),
+        path=skill_dir,
+        active=True,
+    )
+    catalog = SkillCatalog({"hello": skill})
+    sandbox = NoopBackend()
+
+    call_count = 0
+
+    @dataclass
+    class ToolThenContentProvider:
+        async def stream(
+            self,
+            messages: list[Message],
+            tools: list[dict] | None = None,
+        ) -> AsyncIterator[StreamChunk]:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                yield StreamChunk(
+                    tool_calls_delta=[{
+                        "index": 0,
+                        "id": "call_1",
+                        "function": {
+                            "name": "greet",
+                            "arguments": json.dumps({"name": "Alice"}),
+                        },
+                    }],
+                    finish_reason="tool_calls",
+                )
+            else:
+                yield StreamChunk(content_delta="Done greeting!")
+                yield StreamChunk(finish_reason="stop")
+
+    session = Session(
+        provider=ToolThenContentProvider(),
+        catalog=catalog,
+        sandbox=sandbox,
+        tool_timeout=10.0,
+    )
+    await run_agent_loop(session, "Greet Alice", _async_noop)
+
+    assert call_count == 2
+    assert any(m.role == "tool" for m in session.messages)
+    tool_msg = next(m for m in session.messages if m.role == "tool")
+    assert "Hello, Alice!" in tool_msg.content
+    assert session.messages[-1].role == "assistant"
+    assert session.messages[-1].content == "Done greeting!"
+
+
+@pytest.mark.asyncio
+async def test_should_not_dispatch_without_catalog() -> None:
+    """Without catalog/sandbox, tool calls are recorded but not dispatched."""
+    provider = FakeProvider(
+        chunks=[
+            StreamChunk(
+                tool_calls_delta=[{
+                    "index": 0,
+                    "id": "call_1",
+                    "function": {"name": "test", "arguments": "{}"},
+                }],
+                finish_reason="tool_calls",
+            ),
+        ]
+    )
+    session = Session(provider=provider)
+    await run_agent_loop(session, "Hi", _async_noop)
+
+    assert len(session.messages) == 2
+    assert session.messages[1].tool_calls is not None
+    assert session.messages[1].tool_calls[0].name == "test"

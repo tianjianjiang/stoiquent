@@ -8,6 +8,9 @@ from stoiquent.models import Message
 
 if TYPE_CHECKING:
     from stoiquent.llm.provider import LLMProvider
+    from stoiquent.sandbox.base import SandboxBackend
+    from stoiquent.sandbox.models import SandboxPolicy
+    from stoiquent.skills.catalog import SkillCatalog
 
 
 @dataclass
@@ -15,3 +18,8 @@ class Session:
     provider: LLMProvider
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
     messages: list[Message] = field(default_factory=list)
+    catalog: SkillCatalog | None = None
+    sandbox: SandboxBackend | None = None
+    sandbox_policy: SandboxPolicy | None = None
+    iteration_limit: int = 25
+    tool_timeout: float = 300.0
