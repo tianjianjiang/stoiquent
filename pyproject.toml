@@ -32,6 +32,7 @@ main_file = "tests/nicegui_main.py"
 [tool.coverage.run]
 source = ["stoiquent"]
 branch = true
+relative_files = true
 
 [tool.coverage.report]
 show_missing = true

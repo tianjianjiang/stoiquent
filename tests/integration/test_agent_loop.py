@@ -5,7 +5,7 @@ import pytest
 from stoiquent.agent.loop import run_agent_loop
 from stoiquent.agent.session import Session
 from stoiquent.llm.openai_compat import OpenAICompatProvider
-from stoiquent.models import ProviderConfig, StreamChunk
+from stoiquent.models import StreamChunk
 
 from tests.integration.conftest import skip_no_model, skip_no_ollama
 
@@ -34,8 +34,6 @@ async def test_should_complete_full_round_trip(
     assert len(session.messages[1].content) > 0
     assert len(chunks) > 0
 
-    await provider.close()
-
 
 @skip_no_ollama
 @skip_no_model
@@ -57,8 +55,6 @@ async def test_should_extract_reasoning_from_deepseek_r1(
     assert len(assistant.content) > 0
     assert assistant.reasoning is not None
     assert len(assistant.reasoning) > 0
-
-    await provider.close()
 
 
 @skip_no_ollama
@@ -87,8 +83,6 @@ async def test_should_stream_content_and_reasoning_separately(
     assert "".join(content_chunks) == session.messages[1].content
     assert "".join(reasoning_chunks) == session.messages[1].reasoning
 
-    await provider.close()
-
 
 @skip_no_ollama
 @skip_no_model
@@ -115,4 +109,3 @@ async def test_should_accumulate_multi_turn_history(
     assert session.messages[3].role == "assistant"
     assert session.messages[3].content is not None
 
-    await provider.close()

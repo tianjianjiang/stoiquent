@@ -90,9 +90,9 @@ def _serialize_message(msg: Message) -> dict:
 
 
 def _parse_sse_line(line: str, supports_reasoning: bool) -> StreamChunk | None:
-    if not line.startswith("data: "):
+    if not line.startswith("data:"):
         return None
-    data = line[6:].strip()
+    data = line[5:].strip()
     if data == "[DONE]":
         return StreamChunk(finish_reason="stop")
 
@@ -109,7 +109,7 @@ def _parse_sse_line(line: str, supports_reasoning: bool) -> StreamChunk | None:
     delta = choices[0].get("delta", {})
     finish_reason = choices[0].get("finish_reason")
 
-    content_delta = delta.get("content", "")
+    content_delta = delta.get("content") or ""
     reasoning_delta = ""
 
     if supports_reasoning:

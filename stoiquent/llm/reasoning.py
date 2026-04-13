@@ -14,6 +14,10 @@ def extract_reasoning(content: str) -> tuple[str, str | None]:
     if not matches:
         return content, None
 
-    reasoning = "\n".join(m.strip() for m in matches)
+    reasoning_parts = [m.strip() for m in matches if m.strip()]
+    if not reasoning_parts:
+        clean = _THINK_PATTERN.sub("", content).strip()
+        return clean, None
+    reasoning = "\n".join(reasoning_parts)
     clean = _THINK_PATTERN.sub("", content).strip()
     return clean, reasoning

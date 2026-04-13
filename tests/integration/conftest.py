@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+
 import httpx
 import pytest
+import pytest_asyncio
 
 from stoiquent.llm.openai_compat import OpenAICompatProvider
 from stoiquent.models import ProviderConfig
@@ -47,6 +50,12 @@ def provider_config() -> ProviderConfig:
     )
 
 
-@pytest.fixture
-def provider(provider_config: ProviderConfig) -> OpenAICompatProvider:
-    return OpenAICompatProvider(provider_config)
+@pytest_asyncio.fixture
+async def provider(
+    provider_config: ProviderConfig,
+) -> AsyncIterator[OpenAICompatProvider]:
+    p = OpenAICompatProvider(provider_config)
+    try:
+        yield p
+    finally:
+        await p.close()

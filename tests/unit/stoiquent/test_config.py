@@ -73,6 +73,12 @@ def test_should_use_empty_string_for_missing_env_var(
     assert config.providers["test-provider"].api_key == ""
 
 
+def test_should_raise_system_exit_on_missing_file(tmp_path: Path) -> None:
+    missing = tmp_path / "nonexistent.toml"
+    with pytest.raises(SystemExit, match="Config file not found"):
+        load_config(missing)
+
+
 def test_should_raise_system_exit_on_permission_error(tmp_path: Path) -> None:
     config_file = tmp_path / "stoiquent.toml"
     config_file.write_text("[ui]\nmode = 'browser'\n")

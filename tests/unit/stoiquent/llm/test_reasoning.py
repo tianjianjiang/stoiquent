@@ -47,6 +47,20 @@ def test_should_handle_only_think_block() -> None:
     assert reasoning == "All reasoning, no answer"
 
 
+def test_should_return_none_for_empty_think_blocks() -> None:
+    content = "<think>   </think>The answer."
+    clean, reasoning = extract_reasoning(content)
+    assert clean == "The answer."
+    assert reasoning is None
+
+
+def test_should_return_none_for_whitespace_only_think_blocks() -> None:
+    content = "<think>\n\n</think><think>  </think>Result."
+    clean, reasoning = extract_reasoning(content)
+    assert clean == "Result."
+    assert reasoning is None
+
+
 def test_should_strip_whitespace_from_reasoning() -> None:
     content = "  <think> padded </think>  answer  "
     clean, reasoning = extract_reasoning(content)

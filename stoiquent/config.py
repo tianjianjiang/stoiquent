@@ -54,6 +54,8 @@ def load_config(path: Path | None = None) -> AppConfig:
     try:
         with open(config_path, "rb") as f:
             raw = tomllib.load(f)
+    except FileNotFoundError:
+        raise SystemExit(f"Config file not found: {config_path}") from None
     except tomllib.TOMLDecodeError as e:
         raise SystemExit(f"Invalid TOML in {config_path}: {e}") from None
     except PermissionError:

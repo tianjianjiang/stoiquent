@@ -103,6 +103,22 @@ def test_should_pass_tool_calls_delta() -> None:
     assert chunk.tool_calls_delta == tool_delta
 
 
+def test_should_parse_data_without_space_after_colon() -> None:
+    data = {"choices": [{"delta": {"content": "hi"}, "finish_reason": None}]}
+    line = f"data:{json.dumps(data)}"
+    chunk = _parse_sse_line(line, supports_reasoning=False)
+    assert chunk is not None
+    assert chunk.content_delta == "hi"
+
+
+def test_should_handle_null_content_delta() -> None:
+    data = {"choices": [{"delta": {"content": None}, "finish_reason": None}]}
+    line = f"data: {json.dumps(data)}"
+    chunk = _parse_sse_line(line, supports_reasoning=False)
+    assert chunk is not None
+    assert chunk.content_delta == ""
+
+
 def test_should_serialize_user_message() -> None:
     msg = Message(role="user", content="hello")
     result = _serialize_message(msg)
