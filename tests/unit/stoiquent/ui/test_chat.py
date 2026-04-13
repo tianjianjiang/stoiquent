@@ -107,9 +107,25 @@ async def test_should_ignore_whitespace_only_input(user: User) -> None:
         panel.render()
 
     await user.open("/test-whitespace")
-    user.find("Type a message...").type("   ")
-    user.find("Send").click()
+    # Set whitespace directly to bypass NiceGUI input normalization
+    panel._input.value = "   "
+    await panel._send()
+    assert len(session.messages) == 0
 
+
+@pytest.mark.asyncio
+async def test_should_ignore_empty_input_value(user: User) -> None:
+    provider = FakeProvider()
+    session = Session(provider=provider)
+    panel = ChatPanel(session)
+
+    @ui.page("/test-empty")
+    async def page() -> None:
+        panel.render()
+
+    await user.open("/test-empty")
+    panel._input.value = ""
+    await panel._send()
     assert len(session.messages) == 0
 
 
@@ -127,7 +143,8 @@ async def test_should_raise_when_render_not_called(user: User) -> None:
 @pytest.mark.asyncio
 async def test_should_display_reasoning_expansion(user: User) -> None:
     chunks = [
-        StreamChunk(reasoning_delta="Let me think..."),
+        StreamChunk(reasoning_delta="Let me "),
+        StreamChunk(reasoning_delta="think..."),
         StreamChunk(content_delta="The answer is 42."),
         StreamChunk(finish_reason="stop"),
     ]

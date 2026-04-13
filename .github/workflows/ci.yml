@@ -55,4 +55,4 @@ jobs:
           MINIMUM_ORANGE: 70
 
       - name: Enforce coverage threshold
-        run: uv run coverage report --fail-under=90
+        run: uv run coverage report --fail-under=99
