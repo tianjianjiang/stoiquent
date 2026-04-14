@@ -8,6 +8,7 @@ from stoiquent.models import AppConfig
 from stoiquent.sandbox.detect import detect_backend
 from stoiquent.skills.catalog import SkillCatalog
 from stoiquent.skills.discovery import discover_skills
+from stoiquent.skills.mcp_bridge import MCPBridge
 from stoiquent.ui import layout
 
 
@@ -28,11 +29,14 @@ def start(config: AppConfig) -> None:
 
     catalog = SkillCatalog(discover_skills(config.skills))
     sandbox = detect_backend(config.sandbox)
+    mcp_bridge = MCPBridge()
+    app.on_shutdown(mcp_bridge.stop_all)
 
     session = Session(
         provider=provider,
         catalog=catalog,
         sandbox=sandbox,
+        mcp_bridge=mcp_bridge,
         iteration_limit=config.agent.iteration_limit,
         tool_timeout=config.sandbox.tool_timeout,
     )

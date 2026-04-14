@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from stoiquent.sandbox.base import SandboxBackend
     from stoiquent.sandbox.models import SandboxPolicy
     from stoiquent.skills.catalog import SkillCatalog
+    from stoiquent.skills.mcp_bridge import MCPBridge
 
 
 @dataclass
@@ -21,6 +22,7 @@ class Session:
     catalog: SkillCatalog | None = None
     sandbox: SandboxBackend | None = None
     sandbox_policy: SandboxPolicy | None = None
+    mcp_bridge: MCPBridge | None = None
     iteration_limit: int = 25
     tool_timeout: float = 300.0
 

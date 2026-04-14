@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 
@@ -8,6 +9,7 @@ from stoiquent.sandbox.base import SandboxBackend
 from stoiquent.sandbox.models import SandboxPolicy
 from stoiquent.skills.catalog import SkillCatalog
 from stoiquent.skills.executor import build_command, resolve_script
+from stoiquent.skills.mcp_bridge import MCPBridge
 from stoiquent.skills.models import Skill, SkillToolDef
 
 logger = logging.getLogger(__name__)
@@ -19,13 +21,27 @@ async def dispatch_tool_call(
     sandbox: SandboxBackend,
     policy: SandboxPolicy,
     timeout: float,
+    mcp_bridge: MCPBridge | None = None,
 ) -> str:
-    """Route a tool call to the appropriate skill executor.
+    """Route a tool call to the appropriate skill executor or MCP server.
 
     Returns the tool result as a string. Never raises -- errors are
     returned as descriptive strings so the LLM can see them.
     """
     try:
+        if mcp_bridge is not None:
+            server_id = mcp_bridge.find_server_for_tool(tool_call.name)
+            if server_id is not None:
+                logger.info("Routing tool '%s' to MCP server '%s'", tool_call.name, server_id)
+                try:
+                    return await asyncio.wait_for(
+                        mcp_bridge.call_tool(
+                            server_id, tool_call.name, tool_call.arguments,
+                        ),
+                        timeout=timeout,
+                    )
+                except asyncio.TimeoutError:
+                    return f"Error: MCP tool '{tool_call.name}' timed out after {timeout}s"
         return await _execute_tool(tool_call, catalog, sandbox, policy, timeout)
     except Exception as e:
         logger.exception("Unexpected error dispatching tool '%s'", tool_call.name)

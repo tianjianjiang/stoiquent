@@ -1,26 +1,12 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
-from dataclasses import dataclass, field
-
 import pytest
 from nicegui import ui
 from nicegui.testing import User
 
 from stoiquent.agent.session import Session
-from stoiquent.llm.openai_compat import OpenAICompatProvider
-from stoiquent.models import Message, ProviderConfig, StreamChunk
 from stoiquent.ui import layout
-
-
-@dataclass
-class FakeProvider:
-    async def stream(
-        self,
-        messages: list[Message],
-        tools: list[dict] | None = None,
-    ) -> AsyncIterator[StreamChunk]:
-        yield StreamChunk(finish_reason="stop")
+from tests.conftest import FakeProvider
 
 
 @pytest.mark.asyncio
