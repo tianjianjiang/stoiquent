@@ -64,6 +64,15 @@ async def run_agent_loop(
             return
 
         if session.catalog is None or session.sandbox is None:
+            logger.warning("Tool calls received but catalog/sandbox not configured")
+            for tc in parsed_tool_calls:
+                session.messages.append(
+                    Message(
+                        role="tool",
+                        content="Error: Tool execution is not available.",
+                        tool_call_id=tc.id,
+                    )
+                )
             return
 
         policy = session.sandbox_policy or default_policy()
@@ -111,13 +120,17 @@ def _parse_tool_calls(accum: list[dict[str, Any]]) -> list[ToolCall]:
         args_str = func.get("arguments", "")
 
         if not call_id or not name:
+            logger.warning("Skipping tool call with missing id=%r or name=%r", call_id, name)
             continue
 
         try:
             arguments = json.loads(args_str) if args_str else {}
         except json.JSONDecodeError:
-            logger.warning("Invalid JSON in tool call arguments: %s", args_str[:200])
-            arguments = {}
+            logger.warning(
+                "Invalid JSON in tool call arguments for '%s', skipping: %s",
+                name, args_str[:200],
+            )
+            continue
 
         result.append(ToolCall(id=call_id, name=name, arguments=arguments))
     return result

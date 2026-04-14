@@ -193,13 +193,12 @@ def test_parse_tool_calls_skips_incomplete() -> None:
     assert _parse_tool_calls(accum) == []
 
 
-def test_parse_tool_calls_handles_bad_json() -> None:
+def test_parse_tool_calls_skips_bad_json() -> None:
     accum = [
         {"id": "call_1", "function": {"name": "test", "arguments": "not json"}},
     ]
     result = _parse_tool_calls(accum)
-    assert len(result) == 1
-    assert result[0].arguments == {}
+    assert result == []
 
 
 @pytest.mark.asyncio
@@ -287,6 +286,11 @@ async def test_should_not_dispatch_without_catalog() -> None:
     session = Session(provider=provider)
     await run_agent_loop(session, "Hi", _async_noop)
 
-    assert len(session.messages) == 2
+    # assistant with tool_calls + tool error messages (catalog not configured)
+    assert len(session.messages) >= 3
     assert session.messages[1].tool_calls is not None
     assert session.messages[1].tool_calls[0].name == "test"
+    # Should have a tool result error message since catalog is None
+    tool_msgs = [m for m in session.messages if m.role == "tool"]
+    assert len(tool_msgs) == 1
+    assert "not available" in tool_msgs[0].content

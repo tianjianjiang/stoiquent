@@ -54,8 +54,8 @@ def _read_shebang(path: Path) -> str | None:
             first_line = f.readline().strip()
         if first_line.startswith("#!"):
             return first_line[2:].strip()
-    except OSError:
-        pass
+    except OSError as e:
+        logger.warning("Cannot read shebang from %s: %s", path, e)
     return None
 
 
@@ -63,7 +63,8 @@ def _has_pep723_metadata(path: Path) -> bool:
     try:
         text = path.read_text(encoding="utf-8")
         return "# /// script" in text
-    except OSError:
+    except OSError as e:
+        logger.warning("Cannot check PEP 723 metadata in %s: %s", path, e)
         return False
 
 
@@ -71,7 +72,7 @@ def _is_within(path: Path, parent: Path) -> bool:
     try:
         path.resolve().relative_to(parent.resolve())
         return True
-    except ValueError:
+    except (ValueError, OSError):
         return False
 
 
