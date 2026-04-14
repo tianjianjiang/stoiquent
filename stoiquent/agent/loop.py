@@ -79,6 +79,7 @@ async def run_agent_loop(
         for tc in parsed_tool_calls:
             result = await dispatch_tool_call(
                 tc, session.catalog, session.sandbox, policy, session.tool_timeout,
+                mcp_bridge=session.mcp_bridge,
             )
             session.messages.append(
                 Message(role="tool", content=result, tool_call_id=tc.id)

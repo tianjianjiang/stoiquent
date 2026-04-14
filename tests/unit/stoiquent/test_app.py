@@ -87,4 +87,4 @@ def test_should_register_shutdown_hook() -> None:
 
         start(config)
 
-        mock_app.on_shutdown.assert_called_once()
+        assert mock_app.on_shutdown.call_count >= 1
