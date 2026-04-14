@@ -40,6 +40,12 @@ def _interpolate_dict(data: dict) -> dict:
     for key, value in data.items():
         if isinstance(value, str) and "${" in value:
             data[key] = _interpolate_env(value)
+        elif isinstance(value, list):
+            data[key] = [
+                _interpolate_env(item) if isinstance(item, str) and "${" in item
+                else item
+                for item in value
+            ]
     return data
 
 

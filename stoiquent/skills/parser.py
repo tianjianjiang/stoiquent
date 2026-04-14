@@ -21,7 +21,7 @@ def parse_skill_md(path: Path) -> tuple[SkillMeta, str] | None:
     """
     try:
         text = path.read_text(encoding="utf-8")
-    except OSError as e:
+    except (OSError, UnicodeDecodeError) as e:
         logger.warning("Cannot read %s: %s", path, e)
         return None
 

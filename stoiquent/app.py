@@ -24,6 +24,8 @@ def start(config: AppConfig) -> None:
         raise SystemExit(msg)
 
     provider = OpenAICompatProvider(provider_config)
+    app.on_shutdown(provider.close)
+
     catalog = SkillCatalog(discover_skills(config.skills))
     sandbox = detect_backend(config.sandbox)
 
@@ -34,8 +36,6 @@ def start(config: AppConfig) -> None:
         iteration_limit=config.agent.iteration_limit,
         tool_timeout=config.sandbox.tool_timeout,
     )
-
-    app.on_shutdown(provider.close)
 
     @ui.page("/")
     async def _main_page() -> None:  # pragma: no cover

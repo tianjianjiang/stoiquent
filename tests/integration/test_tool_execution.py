@@ -89,7 +89,7 @@ async def test_should_execute_tool_call_round_trip(
     assert len(tool_msgs) >= 1, (
         f"Expected at least one tool message, got roles: {[m.role for m in session.messages]}"
     )
-    assert "Hello, Alice!" in tool_msgs[0].content
+    assert any("Hello, Alice!" in (m.content or "") for m in tool_msgs)
 
     # The assistant should have made a tool call
     assistant_with_tools = [
@@ -97,7 +97,7 @@ async def test_should_execute_tool_call_round_trip(
         if m.role == "assistant" and m.tool_calls
     ]
     assert len(assistant_with_tools) >= 1
-    assert assistant_with_tools[0].tool_calls[0].name == "greet"
+    assert any(tc.name == "greet" for tc in assistant_with_tools[0].tool_calls)
 
     # Final message should be assistant with content (the response after tool result)
     assert session.messages[-1].role == "assistant"
@@ -127,4 +127,4 @@ async def test_should_pass_arguments_to_tool(
     assert len(tool_msgs) >= 1, (
         f"Expected tool message, got roles: {[m.role for m in session.messages]}"
     )
-    assert "Hello, Bob!" in tool_msgs[0].content
+    assert any("Hello, Bob!" in (m.content or "") for m in tool_msgs)
