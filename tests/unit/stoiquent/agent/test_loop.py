@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import AsyncIterator
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -18,6 +18,7 @@ from stoiquent.models import Message, StreamChunk
 from stoiquent.sandbox.noop import NoopBackend
 from stoiquent.skills.catalog import SkillCatalog
 from stoiquent.skills.models import Skill, SkillMeta, SkillToolDef
+from tests.conftest import FakeProvider
 
 
 async def _async_noop(_chunk: StreamChunk) -> None:
@@ -28,19 +29,6 @@ def _async_append(target: list[StreamChunk]) -> OnChunkCallback:
     async def _cb(chunk: StreamChunk) -> None:
         target.append(chunk)
     return _cb
-
-
-@dataclass
-class FakeProvider:
-    chunks: list[StreamChunk] = field(default_factory=list)
-
-    async def stream(
-        self,
-        messages: list[Message],
-        tools: list[dict] | None = None,
-    ) -> AsyncIterator[StreamChunk]:
-        for chunk in self.chunks:
-            yield chunk
 
 
 @pytest.mark.asyncio

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from typing import Any
 
 import pytest
 
@@ -14,16 +15,18 @@ ECHO_SERVER = str(
 )
 
 
-def _make_mock_tool(name: str, description: str = "") -> MagicMock:
-    tool = MagicMock()
-    tool.name = name
-    tool.description = description
-    tool.inputSchema = {"type": "object", "properties": {"message": {"type": "string"}}}
-    return tool
+@dataclass
+class FakeMCPTool:
+    """Mimics the MCP SDK tool object shape without importing MCP types."""
+    name: str
+    description: str | None = ""
+    inputSchema: dict[str, Any] | None = field(
+        default_factory=lambda: {"type": "object", "properties": {"message": {"type": "string"}}}
+    )
 
 
 def test_mcp_tool_to_openai_format() -> None:
-    tool = _make_mock_tool("echo", "Echo back a message")
+    tool = FakeMCPTool("echo", "Echo back a message")
     result = _mcp_tool_to_openai(tool, "srv_1")
     assert result["type"] == "function"
     assert result["function"]["name"] == "echo"
@@ -32,14 +35,14 @@ def test_mcp_tool_to_openai_format() -> None:
 
 
 def test_mcp_tool_to_openai_with_empty_description() -> None:
-    tool = _make_mock_tool("echo")
+    tool = FakeMCPTool("echo")
     tool.description = None
     result = _mcp_tool_to_openai(tool, "srv_1")
     assert result["function"]["description"] == ""
 
 
 def test_mcp_tool_to_openai_with_no_schema() -> None:
-    tool = _make_mock_tool("echo")
+    tool = FakeMCPTool("echo")
     tool.inputSchema = None
     result = _mcp_tool_to_openai(tool, "srv_1")
     assert result["function"]["parameters"] == {"type": "object", "properties": {}}

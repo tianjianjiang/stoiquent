@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner
@@ -69,7 +68,8 @@ paths = ["{FIXTURES}"]
 
 
 @pytest.mark.integration
-def test_should_serve_with_mock_run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_should_serve_creates_real_server(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Uses real create_mcp_server, only patches mcp.run() to prevent blocking."""
     config_file = tmp_path / "stoiquent.toml"
     config_file.write_text(f"""\
 [skills]
@@ -77,12 +77,15 @@ paths = ["{FIXTURES}"]
 """)
     monkeypatch.chdir(tmp_path)
 
-    with patch("stoiquent.skills.mcp_server.FastMCP") as mock_fastmcp:
-        mock_instance = mock_fastmcp.return_value
-        mock_instance._tool_manager._tools = {}
-        mock_instance.tool.return_value = lambda f: f
+    run_called_with: list[dict] = []
 
-        runner = CliRunner()
-        result = runner.invoke(main, ["serve"])
-        assert result.exit_code == 0
-        mock_instance.run.assert_called_once_with(transport="stdio")
+    def fake_run(self: object, **kwargs: object) -> None:
+        run_called_with.append(kwargs)
+
+    monkeypatch.setattr("mcp.server.fastmcp.FastMCP.run", fake_run)
+
+    runner = CliRunner()
+    result = runner.invoke(main, ["serve"])
+    assert result.exit_code == 0
+    assert len(run_called_with) == 1
+    assert run_called_with[0].get("transport") == "stdio"

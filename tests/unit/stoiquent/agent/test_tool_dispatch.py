@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -234,20 +233,21 @@ async def test_should_fallthrough_when_mcp_has_no_match(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_should_handle_mcp_timeout() -> None:
-    bridge = MagicMock(spec=MCPBridge)
-    bridge.find_server_for_tool.return_value = "srv_1"
+    import asyncio as _asyncio
 
-    async def slow_call(*args: object, **kwargs: object) -> str:
-        import asyncio
-        await asyncio.sleep(10)
-        return "never"
+    class SlowBridge:
+        """Simulates an MCP bridge with a tool that takes too long."""
+        def find_server_for_tool(self, name: str) -> str:
+            return "srv_1"
 
-    bridge.call_tool = slow_call
+        async def call_tool(self, server_id: str, tool_name: str, arguments: dict) -> str:
+            await _asyncio.sleep(10)
+            return "never"
 
     catalog = SkillCatalog()
     sandbox = NoopBackend()
     tc = ToolCall(id="call_1", name="slow_tool", arguments={})
     result = await dispatch_tool_call(
-        tc, catalog, sandbox, SandboxPolicy(), 0.1, mcp_bridge=bridge,
+        tc, catalog, sandbox, SandboxPolicy(), 0.1, mcp_bridge=SlowBridge(),
     )
     assert "timed out" in result
