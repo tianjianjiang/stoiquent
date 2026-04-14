@@ -95,6 +95,13 @@ class MCPBridge:
                 else:
                     parts.append(str(content))
             return "\n".join(parts) if parts else ""
+        except (ConnectionError, BrokenPipeError, EOFError) as e:
+            logger.error(
+                "MCP server '%s' appears dead (tool '%s'): %s",
+                server_id, tool_name, e,
+            )
+            self._servers.pop(server_id, None)
+            return f"Error: MCP server for '{tool_name}' is no longer available: {e}"
         except Exception as e:
             logger.exception("MCP tool call '%s' failed on server '%s'", tool_name, server_id)
             return f"Error: MCP tool '{tool_name}' failed: {e}"
@@ -105,8 +112,12 @@ class MCPBridge:
             return
         try:
             await conn.exit_stack.aclose()
+        except (KeyboardInterrupt, SystemExit):
+            raise
         except BaseException:
-            pass
+            # anyio cancel scope CancelledError is expected when stopping
+            # multiple MCP servers in the same event loop task
+            logger.debug("MCP server cleanup for '%s' completed with suppressed error", server_id)
 
     async def stop_all(self) -> None:
         for server_id in list(self._servers):

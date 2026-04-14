@@ -33,7 +33,10 @@ def create_mcp_server(
     timeout = config.sandbox.tool_timeout
 
     for name in list(catalog.skills):
-        catalog.activate(name)
+        try:
+            catalog.activate(name)
+        except Exception:
+            logger.error("Failed to activate skill '%s', skipping", name, exc_info=True)
 
     for skill in catalog.get_active_skills():
         for tool_def in skill.meta.tools:
