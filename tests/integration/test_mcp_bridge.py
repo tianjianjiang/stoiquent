@@ -18,6 +18,8 @@ from stoiquent.skills.models import MCPServerDef, Skill, SkillMeta, SkillToolDef
 
 from tests.integration.conftest import skip_no_model, skip_no_ollama
 
+ECHO_SERVER_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "mcp_servers"
+
 ECHO_SERVER = str(
     Path(__file__).resolve().parents[1] / "fixtures" / "mcp_servers" / "echo_server.py"
 )
@@ -112,5 +114,46 @@ async def test_should_route_mcp_tool_call_from_llm(
             f"Expected tool message, got roles: {[m.role for m in session.messages]}"
         )
         assert any("Echo:" in (m.content or "") for m in tool_msgs)
+    finally:
+        await bridge.stop_all()
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_should_handle_start_server_failure() -> None:
+    bridge = MCPBridge()
+    bad_def = MCPServerDef(command="/nonexistent/binary/xyz", args=[])
+    with pytest.raises(Exception):
+        await bridge.start_server(bad_def)
+    assert bridge.server_ids == []
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_should_handle_call_to_unknown_server() -> None:
+    bridge = MCPBridge()
+    result = await bridge.call_tool("nonexistent_id", "echo", {"message": "hi"})
+    assert "not found" in result
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_should_find_tools_across_servers() -> None:
+    bridge = MCPBridge()
+    server_def = MCPServerDef(command=sys.executable, args=[ECHO_SERVER])
+    try:
+        sid = await bridge.start_server(server_def)
+
+        all_tools = bridge.get_tools()
+        assert len(all_tools) >= 2
+
+        echo_server = bridge.find_server_for_tool("echo")
+        assert echo_server == sid
+
+        unknown = bridge.find_server_for_tool("nonexistent_tool")
+        assert unknown is None
+
+        server_tools = bridge.get_tools(sid)
+        assert len(server_tools) >= 1
     finally:
         await bridge.stop_all()

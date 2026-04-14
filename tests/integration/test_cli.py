@@ -31,3 +31,19 @@ def test_should_show_serve_help() -> None:
     result = runner.invoke(main, ["serve", "--help"])
     assert result.exit_code == 0
     assert "MCP server" in result.output or "skills" in result.output
+
+
+@pytest.mark.integration
+def test_should_show_run_help() -> None:
+    runner = CliRunner()
+    result = runner.invoke(main, ["run", "--help"])
+    assert result.exit_code == 0
+    assert "NiceGUI" in result.output or "mode" in result.output
+
+
+@pytest.mark.integration
+def test_should_show_list_skills_help() -> None:
+    runner = CliRunner()
+    result = runner.invoke(main, ["list-skills", "--help"])
+    assert result.exit_code == 0
+    assert "discovered" in result.output.lower() or "skills" in result.output.lower()
