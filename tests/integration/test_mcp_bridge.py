@@ -1,0 +1,116 @@
+"""Integration tests for MCP bridge with real echo server."""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import pytest
+
+from stoiquent.agent.loop import run_agent_loop
+from stoiquent.agent.session import Session
+from stoiquent.llm.openai_compat import OpenAICompatProvider
+from stoiquent.models import StreamChunk
+from stoiquent.sandbox.noop import NoopBackend
+from stoiquent.sandbox.policy import default_policy
+from stoiquent.skills.catalog import SkillCatalog
+from stoiquent.skills.mcp_bridge import MCPBridge
+from stoiquent.skills.models import MCPServerDef, Skill, SkillMeta, SkillToolDef
+
+from tests.integration.conftest import skip_no_model, skip_no_ollama
+
+ECHO_SERVER = str(
+    Path(__file__).resolve().parents[1] / "fixtures" / "mcp_servers" / "echo_server.py"
+)
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_should_start_discover_call_and_stop_mcp_server() -> None:
+    """Full lifecycle: start server, discover tools, call tool, stop."""
+    bridge = MCPBridge()
+    server_def = MCPServerDef(command=sys.executable, args=[ECHO_SERVER])
+
+    try:
+        server_id = await bridge.start_server(server_def)
+
+        tools = bridge.get_tools(server_id)
+        tool_names = {t["function"]["name"] for t in tools}
+        assert "echo" in tool_names
+        assert "add" in tool_names
+
+        echo_result = await bridge.call_tool(server_id, "echo", {"message": "integration test"})
+        assert "Echo: integration test" in echo_result
+
+        add_result = await bridge.call_tool(server_id, "add", {"a": 3, "b": 4})
+        assert "7" in add_result
+    finally:
+        await bridge.stop_all()
+
+
+@skip_no_ollama
+@skip_no_model
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_should_route_mcp_tool_call_from_llm(
+    provider: OpenAICompatProvider,
+) -> None:
+    """End-to-end: LLM calls an MCP tool, bridge forwards to echo server."""
+    bridge = MCPBridge()
+    server_def = MCPServerDef(command=sys.executable, args=[ECHO_SERVER])
+
+    try:
+        await bridge.start_server(server_def)
+
+        skill = Skill(
+            meta=SkillMeta(
+                name="echo-skill",
+                description="Skill backed by MCP echo server",
+                tools=[
+                    SkillToolDef(
+                        name="echo",
+                        description="Echo back a message. Takes a 'message' string parameter.",
+                        parameters={
+                            "type": "object",
+                            "properties": {
+                                "message": {"type": "string", "description": "Message to echo"},
+                            },
+                            "required": ["message"],
+                        },
+                    ),
+                ],
+            ),
+            path=Path("/fake"),
+            instructions="Use the echo tool when asked to echo something.",
+            active=True,
+        )
+        catalog = SkillCatalog({"echo-skill": skill})
+        sandbox = NoopBackend()
+
+        session = Session(
+            provider=provider,
+            catalog=catalog,
+            sandbox=sandbox,
+            mcp_bridge=bridge,
+            sandbox_policy=default_policy(),
+            iteration_limit=5,
+            tool_timeout=30.0,
+        )
+
+        chunks: list[StreamChunk] = []
+
+        async def on_chunk(chunk: StreamChunk) -> None:
+            chunks.append(chunk)
+
+        await run_agent_loop(
+            session,
+            "Use the echo tool to echo the message 'hello from integration test'. You must call the echo tool.",
+            on_chunk,
+        )
+
+        tool_msgs = [m for m in session.messages if m.role == "tool"]
+        assert len(tool_msgs) >= 1, (
+            f"Expected tool message, got roles: {[m.role for m in session.messages]}"
+        )
+        assert any("Echo:" in (m.content or "") for m in tool_msgs)
+    finally:
+        await bridge.stop_all()
