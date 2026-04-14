@@ -5,6 +5,9 @@ from nicegui import app, ui
 from stoiquent.agent.session import Session
 from stoiquent.llm.openai_compat import OpenAICompatProvider
 from stoiquent.models import AppConfig
+from stoiquent.sandbox.detect import detect_backend
+from stoiquent.skills.catalog import SkillCatalog
+from stoiquent.skills.discovery import discover_skills
 from stoiquent.ui import layout
 
 
@@ -21,9 +24,18 @@ def start(config: AppConfig) -> None:
         raise SystemExit(msg)
 
     provider = OpenAICompatProvider(provider_config)
-    session = Session(provider=provider)
-
     app.on_shutdown(provider.close)
+
+    catalog = SkillCatalog(discover_skills(config.skills))
+    sandbox = detect_backend(config.sandbox)
+
+    session = Session(
+        provider=provider,
+        catalog=catalog,
+        sandbox=sandbox,
+        iteration_limit=config.agent.iteration_limit,
+        tool_timeout=config.sandbox.tool_timeout,
+    )
 
     @ui.page("/")
     async def _main_page() -> None:  # pragma: no cover

@@ -6,7 +6,15 @@ import re
 import tomllib
 from pathlib import Path
 
-from stoiquent.models import AppConfig, ProviderConfig, UIConfig
+from stoiquent.models import (
+    AgentConfig,
+    AppConfig,
+    PersistenceConfig,
+    ProviderConfig,
+    SandboxConfig,
+    SkillsConfig,
+    UIConfig,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +40,12 @@ def _interpolate_dict(data: dict) -> dict:
     for key, value in data.items():
         if isinstance(value, str) and "${" in value:
             data[key] = _interpolate_env(value)
+        elif isinstance(value, list):
+            data[key] = [
+                _interpolate_env(item) if isinstance(item, str) and "${" in item
+                else item
+                for item in value
+            ]
     return data
 
 
@@ -71,8 +85,17 @@ def load_config(path: Path | None = None) -> AppConfig:
         _interpolate_dict(prov_data)
         providers[name] = ProviderConfig(**prov_data)
 
+    skills_config = SkillsConfig(**_interpolate_dict(raw.get("skills", {})))
+    sandbox_config = SandboxConfig(**_interpolate_dict(raw.get("sandbox", {})))
+    persistence_config = PersistenceConfig(**_interpolate_dict(raw.get("persistence", {})))
+    agent_config = AgentConfig(**_interpolate_dict(raw.get("agent", {})))
+
     return AppConfig(
         ui=ui_config,
         default_provider=default_provider,
         providers=providers,
+        skills=skills_config,
+        sandbox=sandbox_config,
+        persistence=persistence_config,
+        agent=agent_config,
     )

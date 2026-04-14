@@ -1314,6 +1314,7 @@ dependencies = [
     { name = "httpx" },
     { name = "nicegui" },
     { name = "pydantic" },
+    { name = "pyyaml" },
 ]
 
 [package.dev-dependencies]
@@ -1331,6 +1332,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
     { name = "nicegui", specifier = ">=2.0" },
     { name = "pydantic", specifier = ">=2.0" },
+    { name = "pyyaml", specifier = ">=6.0.3" },
 ]
 
 [package.metadata.requires-dev]

@@ -3,7 +3,17 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from stoiquent.models import AppConfig, Message, ProviderConfig, StreamChunk, ToolCall
+from stoiquent.models import (
+    AgentConfig,
+    AppConfig,
+    Message,
+    PersistenceConfig,
+    ProviderConfig,
+    SandboxConfig,
+    SkillsConfig,
+    StreamChunk,
+    ToolCall,
+)
 
 
 def test_should_accept_valid_roles() -> None:
@@ -123,3 +133,68 @@ def test_should_reject_app_config_with_invalid_default_provider() -> None:
 def test_should_accept_app_config_with_empty_providers() -> None:
     config = AppConfig(default_provider="anything", providers={})
     assert config.default_provider == "anything"
+
+
+def test_should_create_skills_config_with_defaults() -> None:
+    config = SkillsConfig()
+    assert config.paths == ["~/.agents/skills", "~/.stoiquent/skills"]
+
+
+def test_should_create_skills_config_with_custom_paths() -> None:
+    config = SkillsConfig(paths=["/custom/skills"])
+    assert config.paths == ["/custom/skills"]
+
+
+def test_skills_config_rejects_extra_fields() -> None:
+    with pytest.raises(ValidationError, match="extra"):
+        SkillsConfig(unknown="field")
+
+
+def test_should_create_sandbox_config_with_defaults() -> None:
+    config = SandboxConfig()
+    assert config.backend == "auto"
+    assert config.container_runtime == "auto"
+    assert config.tool_timeout == 300.0
+
+
+def test_sandbox_config_rejects_zero_timeout() -> None:
+    with pytest.raises(ValidationError, match="tool_timeout"):
+        SandboxConfig(tool_timeout=0)
+
+
+def test_sandbox_config_rejects_extra_fields() -> None:
+    with pytest.raises(ValidationError, match="extra"):
+        SandboxConfig(unknown="field")
+
+
+def test_should_create_persistence_config_with_defaults() -> None:
+    config = PersistenceConfig()
+    assert config.data_dir == "~/.stoiquent"
+
+
+def test_persistence_config_rejects_extra_fields() -> None:
+    with pytest.raises(ValidationError, match="extra"):
+        PersistenceConfig(unknown="field")
+
+
+def test_should_create_agent_config_with_defaults() -> None:
+    config = AgentConfig()
+    assert config.iteration_limit == 25
+
+
+def test_agent_config_rejects_zero_iteration_limit() -> None:
+    with pytest.raises(ValidationError, match="iteration_limit"):
+        AgentConfig(iteration_limit=0)
+
+
+def test_agent_config_rejects_extra_fields() -> None:
+    with pytest.raises(ValidationError, match="extra"):
+        AgentConfig(unknown="field")
+
+
+def test_app_config_includes_new_sections_with_defaults() -> None:
+    config = AppConfig()
+    assert isinstance(config.skills, SkillsConfig)
+    assert isinstance(config.sandbox, SandboxConfig)
+    assert isinstance(config.persistence, PersistenceConfig)
+    assert isinstance(config.agent, AgentConfig)

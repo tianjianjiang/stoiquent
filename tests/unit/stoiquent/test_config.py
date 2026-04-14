@@ -73,6 +73,60 @@ def test_should_use_empty_string_for_missing_env_var(
     assert config.providers["test-provider"].api_key == ""
 
 
+def test_should_parse_skills_section(tmp_path: Path) -> None:
+    config_file = tmp_path / "stoiquent.toml"
+    config_file.write_text("""\
+[skills]
+paths = ["/custom/skills"]
+""")
+    config = load_config(config_file)
+    assert config.skills.paths == ["/custom/skills"]
+
+
+def test_should_parse_sandbox_section(tmp_path: Path) -> None:
+    config_file = tmp_path / "stoiquent.toml"
+    config_file.write_text("""\
+[sandbox]
+backend = "none"
+container_runtime = "podman"
+tool_timeout = 60.0
+""")
+    config = load_config(config_file)
+    assert config.sandbox.backend == "none"
+    assert config.sandbox.container_runtime == "podman"
+    assert config.sandbox.tool_timeout == 60.0
+
+
+def test_should_parse_persistence_section(tmp_path: Path) -> None:
+    config_file = tmp_path / "stoiquent.toml"
+    config_file.write_text("""\
+[persistence]
+data_dir = "/custom/data"
+""")
+    config = load_config(config_file)
+    assert config.persistence.data_dir == "/custom/data"
+
+
+def test_should_parse_agent_section(tmp_path: Path) -> None:
+    config_file = tmp_path / "stoiquent.toml"
+    config_file.write_text("""\
+[agent]
+iteration_limit = 10
+""")
+    config = load_config(config_file)
+    assert config.agent.iteration_limit == 10
+
+
+def test_should_use_defaults_for_missing_sections(tmp_path: Path) -> None:
+    config_file = tmp_path / "stoiquent.toml"
+    config_file.write_text("[ui]\nmode = 'browser'\n")
+    config = load_config(config_file)
+    assert config.skills.paths == ["~/.agents/skills", "~/.stoiquent/skills"]
+    assert config.sandbox.backend == "auto"
+    assert config.persistence.data_dir == "~/.stoiquent"
+    assert config.agent.iteration_limit == 25
+
+
 def test_should_raise_system_exit_on_missing_file(tmp_path: Path) -> None:
     missing = tmp_path / "nonexistent.toml"
     with pytest.raises(SystemExit, match="Config file not found"):
