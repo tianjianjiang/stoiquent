@@ -105,9 +105,8 @@ class MCPBridge:
             return
         try:
             await conn.exit_stack.aclose()
-        except (Exception, BaseException) as e:
-            if "cancel scope" not in str(e):
-                logger.exception("Error closing MCP server '%s'", server_id)
+        except BaseException:
+            pass
 
     async def stop_all(self) -> None:
         for server_id in list(self._servers):

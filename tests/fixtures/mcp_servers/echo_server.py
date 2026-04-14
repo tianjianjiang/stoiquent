@@ -1,6 +1,6 @@
 """Minimal MCP server for integration testing.
 
-Exposes a single 'echo' tool that returns its input.
+Exposes two tools: 'echo' (returns its input) and 'add' (adds two numbers).
 """
 from mcp.server.fastmcp import FastMCP
 

@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import logging
 
+import asyncio
+
 from stoiquent.models import ToolCall
 from stoiquent.sandbox.base import SandboxBackend
 from stoiquent.sandbox.models import SandboxPolicy
@@ -32,9 +34,15 @@ async def dispatch_tool_call(
             server_id = mcp_bridge.find_server_for_tool(tool_call.name)
             if server_id is not None:
                 logger.info("Routing tool '%s' to MCP server '%s'", tool_call.name, server_id)
-                return await mcp_bridge.call_tool(
-                    server_id, tool_call.name, tool_call.arguments,
-                )
+                try:
+                    return await asyncio.wait_for(
+                        mcp_bridge.call_tool(
+                            server_id, tool_call.name, tool_call.arguments,
+                        ),
+                        timeout=timeout,
+                    )
+                except asyncio.TimeoutError:
+                    return f"Error: MCP tool '{tool_call.name}' timed out after {timeout}s"
         return await _execute_tool(tool_call, catalog, sandbox, policy, timeout)
     except Exception as e:
         logger.exception("Unexpected error dispatching tool '%s'", tool_call.name)
