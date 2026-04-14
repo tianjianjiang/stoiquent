@@ -44,12 +44,12 @@ async def run_agent_loop(
             parsed_tool_calls = _parse_tool_calls(tool_calls_accum)
             if raw_content or api_reasoning or parsed_tool_calls:
                 if api_reasoning:
-                    final_reasoning: str | None = api_reasoning
-                    final_content = raw_content or None
+                    final_reasoning = api_reasoning
+                    final_content = raw_content
                 else:
                     final_content, final_reasoning = extract_reasoning(raw_content)
-                    final_content = final_content or None
-                    final_reasoning = final_reasoning or None
+                final_content = final_content or None
+                final_reasoning = final_reasoning or None
 
                 session.messages.append(
                     Message(
@@ -101,11 +101,8 @@ def _accumulate_tool_calls(
         if "id" in delta and delta["id"]:
             entry["id"] = delta["id"]
         func_delta = delta.get("function", {})
-        if "name" in func_delta and func_delta["name"]:
-            if not entry["function"]["name"]:
-                entry["function"]["name"] = func_delta["name"]
-            else:
-                entry["function"]["name"] += func_delta["name"]
+        if func_delta.get("name"):
+            entry["function"]["name"] += func_delta["name"]
         if "arguments" in func_delta:
             entry["function"]["arguments"] += func_delta["arguments"]
 
