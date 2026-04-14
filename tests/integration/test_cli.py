@@ -26,8 +26,8 @@ def test_should_list_skills_or_show_empty() -> None:
 
 
 @pytest.mark.integration
-def test_should_show_serve_stub() -> None:
+def test_should_show_serve_help() -> None:
     runner = CliRunner()
-    result = runner.invoke(main, ["serve"])
+    result = runner.invoke(main, ["serve", "--help"])
     assert result.exit_code == 0
-    assert "Not implemented yet" in result.output
+    assert "MCP server" in result.output or "skills" in result.output

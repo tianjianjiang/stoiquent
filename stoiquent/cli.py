@@ -31,9 +31,20 @@ def run(mode: str | None) -> None:
 
 
 @main.command()
-def serve() -> None:
-    """Start as MCP server for external clients."""
-    click.echo("Not implemented yet (Phase 3)")
+@click.option(
+    "--skills-dir",
+    default=None,
+    type=click.Path(exists=True),
+    help="Additional skills directory to discover",
+)
+def serve(skills_dir: str | None) -> None:
+    """Start as MCP server exposing active skills as tools."""
+    from stoiquent.config import load_config
+    from stoiquent.skills.mcp_server import create_mcp_server
+
+    config = load_config()
+    mcp = create_mcp_server(config, skills_dir=skills_dir)
+    mcp.run(transport="stdio")
 
 
 @main.command(name="list-skills")
