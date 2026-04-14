@@ -206,17 +206,18 @@ async def test_should_route_to_mcp_bridge() -> None:
 
     bridge = MCPBridge()
     server_def = MCPServerDef(command=sys.executable, args=[ECHO_SERVER])
-    server_id = await bridge.start_server(server_def)
+    await bridge.start_server(server_def)
 
-    catalog = SkillCatalog()
-    sandbox = NoopBackend()
-    tc = ToolCall(id="call_1", name="echo", arguments={"message": "test"})
-    result = await dispatch_tool_call(
-        tc, catalog, sandbox, SandboxPolicy(), 30.0, mcp_bridge=bridge,
-    )
-    assert "Echo: test" in result
-
-    await bridge.stop_all()
+    try:
+        catalog = SkillCatalog()
+        sandbox = NoopBackend()
+        tc = ToolCall(id="call_1", name="echo", arguments={"message": "test"})
+        result = await dispatch_tool_call(
+            tc, catalog, sandbox, SandboxPolicy(), 30.0, mcp_bridge=bridge,
+        )
+        assert "Echo: test" in result
+    finally:
+        await bridge.stop_all()
 
 
 @pytest.mark.asyncio
