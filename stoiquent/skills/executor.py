@@ -54,7 +54,7 @@ def _read_shebang(path: Path) -> str | None:
             first_line = f.readline().strip()
         if first_line.startswith("#!"):
             return first_line[2:].strip()
-    except OSError as e:
+    except (OSError, UnicodeDecodeError) as e:
         logger.warning("Cannot read shebang from %s: %s", path, e)
     return None
 

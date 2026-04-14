@@ -132,5 +132,12 @@ def _parse_tool_calls(accum: list[dict[str, Any]]) -> list[ToolCall]:
             )
             continue
 
+        if not isinstance(arguments, dict):
+            logger.warning(
+                "Tool call arguments for '%s' is %s, not object; skipping",
+                name, type(arguments).__name__,
+            )
+            continue
+
         result.append(ToolCall(id=call_id, name=name, arguments=arguments))
     return result

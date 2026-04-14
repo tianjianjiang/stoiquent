@@ -55,7 +55,11 @@ def _split_frontmatter(text: str) -> tuple[str | None, str]:
     Returns (None, full_text) if no valid fences found.
     """
     stripped = text.strip()
-    if not stripped.startswith(_FRONTMATTER_FENCE):
+    if not (
+        stripped == _FRONTMATTER_FENCE
+        or stripped.startswith(f"{_FRONTMATTER_FENCE}\n")
+        or stripped.startswith(f"{_FRONTMATTER_FENCE}\r\n")
+    ):
         return None, text
 
     after_first = stripped[len(_FRONTMATTER_FENCE) :]

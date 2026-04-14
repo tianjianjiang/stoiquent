@@ -61,20 +61,21 @@ class NoopBackend(SandboxBackend):
             )
         except asyncio.TimeoutError:
             wall_time = time.monotonic() - start
-            if proc is not None:
-                proc.kill()
-                await proc.wait()
+            await _kill_process(proc)
             return SandboxResult(
                 exit_code=-1,
                 stderr="Process timed out",
                 timed_out=True,
                 wall_time_seconds=wall_time,
             )
+        except asyncio.CancelledError:
+            await _kill_process(proc)
+            raise
         except FileNotFoundError:
             wall_time = time.monotonic() - start
             return SandboxResult(
                 exit_code=127,
-                stderr=f"Command not found: {command[0]}",
+                stderr=f"Command not found: {command[0] if command else '(empty)'}",
                 wall_time_seconds=wall_time,
             )
         except OSError as e:
@@ -90,3 +91,13 @@ class NoopBackend(SandboxBackend):
 
     def name(self) -> str:
         return "noop"
+
+
+async def _kill_process(proc: asyncio.subprocess.Process | None) -> None:
+    if proc is None or proc.returncode is not None:
+        return
+    try:
+        proc.kill()
+        await proc.wait()
+    except ProcessLookupError:
+        pass
