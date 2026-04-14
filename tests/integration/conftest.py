@@ -10,7 +10,7 @@ from stoiquent.llm.openai_compat import OpenAICompatProvider
 from stoiquent.models import ProviderConfig
 
 OLLAMA_BASE_URL = "http://localhost:11434"
-OLLAMA_MODEL = "deepseek-r1:1.5b"
+OLLAMA_MODEL = "qwen3:0.6b"
 
 
 def _ollama_available() -> bool:
@@ -47,6 +47,7 @@ def provider_config() -> ProviderConfig:
         base_url=f"{OLLAMA_BASE_URL}/v1",
         model=OLLAMA_MODEL,
         supports_reasoning=True,
+        native_tools=True,
     )
 
 
