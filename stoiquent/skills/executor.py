@@ -18,7 +18,7 @@ def resolve_script(skill_path: Path, script_name: str) -> Path | None:
         return candidate
 
     for entry in sorted(scripts_dir.iterdir()):
-        if entry.stem == script_name and entry.is_file():
+        if entry.stem == script_name and entry.is_file() and _is_within(entry, scripts_dir):
             return entry
 
     return None

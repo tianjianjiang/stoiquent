@@ -69,6 +69,7 @@ class AgentConfig(BaseModel):
 
 
 class AppConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     ui: UIConfig = Field(default_factory=UIConfig)
     default_provider: str = "local-qwen"
     providers: dict[str, ProviderConfig] = Field(default_factory=dict)

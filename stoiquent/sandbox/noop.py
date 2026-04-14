@@ -37,6 +37,7 @@ class NoopBackend(SandboxBackend):
 
         effective_timeout = timeout if timeout is not None else policy.cpu_seconds
         start = time.monotonic()
+        proc = None
 
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -60,8 +61,9 @@ class NoopBackend(SandboxBackend):
             )
         except asyncio.TimeoutError:
             wall_time = time.monotonic() - start
-            proc.kill()
-            await proc.wait()
+            if proc is not None:
+                proc.kill()
+                await proc.wait()
             return SandboxResult(
                 exit_code=-1,
                 stderr="Process timed out",

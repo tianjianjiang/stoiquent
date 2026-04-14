@@ -294,3 +294,57 @@ async def test_should_not_dispatch_without_catalog() -> None:
     tool_msgs = [m for m in session.messages if m.role == "tool"]
     assert len(tool_msgs) == 1
     assert "not available" in tool_msgs[0].content
+
+
+@pytest.mark.asyncio
+async def test_should_stop_at_iteration_limit(tmp_path: Path) -> None:
+    """Verify the loop terminates when iteration limit is reached."""
+    skill_dir = tmp_path / "loop"
+    scripts_dir = skill_dir / "scripts"
+    scripts_dir.mkdir(parents=True)
+    (scripts_dir / "echo.py").write_text(
+        "#!/usr/bin/env python3\nprint('ok')\n"
+    )
+
+    skill = Skill(
+        meta=SkillMeta(
+            name="loop",
+            description="Looping skill",
+            tools=[SkillToolDef(name="echo", description="Echo")],
+        ),
+        path=skill_dir,
+        active=True,
+    )
+    catalog = SkillCatalog({"loop": skill})
+    sandbox = NoopBackend()
+
+    @dataclass
+    class AlwaysToolCallProvider:
+        async def stream(
+            self,
+            messages: list[Message],
+            tools: list[dict] | None = None,
+        ) -> AsyncIterator[StreamChunk]:
+            yield StreamChunk(
+                tool_calls_delta=[{
+                    "index": 0,
+                    "id": f"call_{len(messages)}",
+                    "function": {"name": "echo", "arguments": "{}"},
+                }],
+                finish_reason="tool_calls",
+            )
+
+    session = Session(
+        provider=AlwaysToolCallProvider(),
+        catalog=catalog,
+        sandbox=sandbox,
+        iteration_limit=2,
+        tool_timeout=10.0,
+    )
+    await run_agent_loop(session, "Loop forever", _async_noop)
+
+    # Should have: user + (assistant+tool_call, tool_result) x 2
+    assistant_msgs = [m for m in session.messages if m.role == "assistant"]
+    tool_msgs = [m for m in session.messages if m.role == "tool"]
+    assert len(assistant_msgs) == 2
+    assert len(tool_msgs) == 2

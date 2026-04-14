@@ -168,3 +168,25 @@ async def test_should_return_error_on_silent_failure(tmp_path: Path) -> None:
         tc, catalog, sandbox, SandboxPolicy(), 30.0,
     )
     assert "failed with exit code 2" in result
+
+
+@pytest.mark.asyncio
+async def test_should_catch_unexpected_sandbox_exception(tmp_path: Path) -> None:
+    catalog = _make_catalog_with_tool(tmp_path)
+
+    class ExplodingSandbox:
+        async def execute(self, **kwargs: object) -> None:
+            raise RuntimeError("sandbox exploded")
+
+        async def is_available(self) -> bool:
+            return True
+
+        def name(self) -> str:
+            return "exploding"
+
+    tc = ToolCall(id="call_1", name="greet", arguments={"name": "Alice"})
+    result = await dispatch_tool_call(
+        tc, catalog, ExplodingSandbox(), SandboxPolicy(), 30.0,
+    )
+    assert "Unexpected failure" in result
+    assert "greet" in result

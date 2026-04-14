@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class BindMount(BaseModel):
@@ -29,3 +29,9 @@ class SandboxResult(BaseModel):
     stderr: str = ""
     timed_out: bool = False
     wall_time_seconds: float = Field(default=0.0, ge=0)
+
+    @model_validator(mode="after")
+    def _check_timeout_consistency(self) -> Self:
+        if self.timed_out and self.exit_code == 0:
+            raise ValueError("exit_code cannot be 0 when timed_out is True")
+        return self

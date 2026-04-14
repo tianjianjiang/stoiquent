@@ -23,3 +23,9 @@ class Session:
     sandbox_policy: SandboxPolicy | None = None
     iteration_limit: int = 25
     tool_timeout: float = 300.0
+
+    def __post_init__(self) -> None:
+        if self.iteration_limit <= 0:
+            raise ValueError(f"iteration_limit must be positive, got {self.iteration_limit}")
+        if self.tool_timeout <= 0:
+            raise ValueError(f"tool_timeout must be positive, got {self.tool_timeout}")
