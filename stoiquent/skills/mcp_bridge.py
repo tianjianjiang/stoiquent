@@ -24,7 +24,7 @@ class MCPBridge:
         params = StdioServerParameters(
             command=server_def.command,
             args=server_def.args,
-            env=server_def.env or None,
+            env=server_def.env if server_def.env else None,
         )
 
         exit_stack = AsyncExitStack()

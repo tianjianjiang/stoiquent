@@ -151,3 +151,15 @@ async def test_bridge_get_tools_all_servers() -> None:
     assert "add" in names
 
     await bridge.stop_all()
+
+
+@pytest.mark.asyncio
+async def test_bridge_start_server_failure() -> None:
+    bridge = MCPBridge()
+    server_def = MCPServerDef(
+        command="/nonexistent/binary",
+        args=[],
+    )
+    with pytest.raises(Exception):
+        await bridge.start_server(server_def)
+    assert bridge.server_ids == []

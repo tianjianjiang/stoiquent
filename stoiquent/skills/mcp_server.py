@@ -27,7 +27,12 @@ def create_mcp_server(
     """
     mcp = FastMCP("Stoiquent Skills Server")
 
-    catalog = SkillCatalog(discover_skills(config.skills))
+    skills_config = config.skills
+    if skills_dir is not None:
+        extra_paths = list(skills_config.paths) + [skills_dir]
+        skills_config = skills_config.model_copy(update={"paths": extra_paths})
+
+    catalog = SkillCatalog(discover_skills(skills_config))
     sandbox = detect_backend(config.sandbox)
     policy = default_policy()
     timeout = config.sandbox.tool_timeout

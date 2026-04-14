@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -9,6 +11,7 @@ from stoiquent.models import ToolCall
 from stoiquent.sandbox.models import SandboxPolicy
 from stoiquent.sandbox.noop import NoopBackend
 from stoiquent.skills.catalog import SkillCatalog
+from stoiquent.skills.mcp_bridge import MCPBridge
 from stoiquent.skills.models import Skill, SkillMeta, SkillToolDef
 
 
@@ -190,3 +193,60 @@ async def test_should_catch_unexpected_sandbox_exception(tmp_path: Path) -> None
     )
     assert "Unexpected failure" in result
     assert "greet" in result
+
+
+ECHO_SERVER = str(
+    Path(__file__).resolve().parents[3] / "fixtures" / "mcp_servers" / "echo_server.py"
+)
+
+
+@pytest.mark.asyncio
+async def test_should_route_to_mcp_bridge() -> None:
+    from stoiquent.skills.models import MCPServerDef
+
+    bridge = MCPBridge()
+    server_def = MCPServerDef(command=sys.executable, args=[ECHO_SERVER])
+    server_id = await bridge.start_server(server_def)
+
+    catalog = SkillCatalog()
+    sandbox = NoopBackend()
+    tc = ToolCall(id="call_1", name="echo", arguments={"message": "test"})
+    result = await dispatch_tool_call(
+        tc, catalog, sandbox, SandboxPolicy(), 30.0, mcp_bridge=bridge,
+    )
+    assert "Echo: test" in result
+
+    await bridge.stop_all()
+
+
+@pytest.mark.asyncio
+async def test_should_fallthrough_when_mcp_has_no_match(tmp_path: Path) -> None:
+    catalog = _make_catalog_with_tool(tmp_path)
+    bridge = MCPBridge()
+    sandbox = NoopBackend()
+    tc = ToolCall(id="call_1", name="greet", arguments={"name": "Alice"})
+    result = await dispatch_tool_call(
+        tc, catalog, sandbox, SandboxPolicy(), 30.0, mcp_bridge=bridge,
+    )
+    assert "Hello, Alice!" in result
+
+
+@pytest.mark.asyncio
+async def test_should_handle_mcp_timeout() -> None:
+    bridge = MagicMock(spec=MCPBridge)
+    bridge.find_server_for_tool.return_value = "srv_1"
+
+    async def slow_call(*args: object, **kwargs: object) -> str:
+        import asyncio
+        await asyncio.sleep(10)
+        return "never"
+
+    bridge.call_tool = slow_call
+
+    catalog = SkillCatalog()
+    sandbox = NoopBackend()
+    tc = ToolCall(id="call_1", name="slow_tool", arguments={})
+    result = await dispatch_tool_call(
+        tc, catalog, sandbox, SandboxPolicy(), 0.1, mcp_bridge=bridge,
+    )
+    assert "timed out" in result
