@@ -9,7 +9,7 @@ from stoiquent.agent.context import build_messages
 from stoiquent.agent.session import Session
 from stoiquent.agent.tool_dispatch import dispatch_tool_call
 from stoiquent.llm.reasoning import extract_reasoning
-from stoiquent.models import Message, StreamChunk, ToolCall
+from stoiquent.models import Message, StreamChunk, ToolCall, ToolCallResult
 from stoiquent.sandbox.policy import default_policy
 
 logger = logging.getLogger(__name__)
@@ -77,6 +77,7 @@ async def run_agent_loop(
 
         policy = session.sandbox_policy or default_policy()
         for tc in parsed_tool_calls:
+            await _safe_notify(on_chunk, StreamChunk(tool_call_start=tc), tc.name)
             result = await dispatch_tool_call(
                 tc, session.catalog, session.sandbox, policy, session.tool_timeout,
                 mcp_bridge=session.mcp_bridge,
@@ -84,8 +85,27 @@ async def run_agent_loop(
             session.messages.append(
                 Message(role="tool", content=result, tool_call_id=tc.id)
             )
+            await _safe_notify(
+                on_chunk,
+                StreamChunk(
+                    tool_call_result=ToolCallResult(
+                        tool_call_id=tc.id, name=tc.name, content=result,
+                    )
+                ),
+                tc.name,
+            )
 
     logger.warning("Agent loop reached iteration limit (%d)", session.iteration_limit)
+
+
+async def _safe_notify(
+    on_chunk: OnChunkCallback, chunk: StreamChunk, tool_name: str
+) -> None:
+    """Call on_chunk, logging and suppressing UI rendering errors."""
+    try:
+        await on_chunk(chunk)
+    except Exception:
+        logger.warning("Failed to render tool event for %s", tool_name, exc_info=True)
 
 
 def _accumulate_tool_calls(
