@@ -28,6 +28,7 @@ def _make_config_with_skill(tmp_path: Path) -> tuple[AppConfig, Path]:
         providers={"p": ProviderConfig(base_url="http://x", model="m")},
         default_provider="p",
         skills={"paths": [str(tmp_path / "skills")]},
+        sandbox={"backend": "none"},
     )
     return config, skill_dir
 
@@ -44,6 +45,7 @@ def test_should_create_empty_server_with_no_skills(tmp_path: Path) -> None:
         providers={"p": ProviderConfig(base_url="http://x", model="m")},
         default_provider="p",
         skills={"paths": [str(tmp_path / "empty")]},
+        sandbox={"backend": "none"},
     )
     mcp = create_mcp_server(config)
     assert len(mcp._tool_manager._tools) == 0
@@ -63,6 +65,7 @@ def test_should_use_skills_dir_parameter(tmp_path: Path) -> None:
         providers={"p": ProviderConfig(base_url="http://x", model="m")},
         default_provider="p",
         skills={"paths": []},
+        sandbox={"backend": "none"},
     )
     mcp = create_mcp_server(config, skills_dir=str(tmp_path / "extra"))
     tool_names = list(mcp._tool_manager._tools.keys())
@@ -101,6 +104,7 @@ async def test_handler_should_return_error_for_missing_script(tmp_path: Path) ->
         providers={"p": ProviderConfig(base_url="http://x", model="m")},
         default_provider="p",
         skills={"paths": [str(tmp_path / "skills")]},
+        sandbox={"backend": "none"},
     )
     mcp = create_mcp_server(config)
     handler = mcp._tool_manager._tools["missing"].fn
@@ -125,6 +129,7 @@ async def test_handler_should_return_error_on_nonzero_exit(tmp_path: Path) -> No
         providers={"p": ProviderConfig(base_url="http://x", model="m")},
         default_provider="p",
         skills={"paths": [str(tmp_path / "skills")]},
+        sandbox={"backend": "none"},
     )
     mcp = create_mcp_server(config)
     handler = mcp._tool_manager._tools["fail"].fn

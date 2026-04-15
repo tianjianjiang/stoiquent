@@ -23,6 +23,7 @@ def _make_config(skills_dir: str) -> AppConfig:
         providers={"p": ProviderConfig(base_url="http://x", model="m")},
         default_provider="p",
         skills={"paths": [skills_dir]},
+        sandbox={"backend": "none"},
     )
 
 
@@ -60,6 +61,7 @@ def test_should_use_skills_dir_parameter() -> None:
         providers={"p": ProviderConfig(base_url="http://x", model="m")},
         default_provider="p",
         skills={"paths": []},
+        sandbox={"backend": "none"},
     )
     mcp = create_mcp_server(config, skills_dir=str(FIXTURES))
     tool_names = list(mcp._tool_manager._tools.keys())
