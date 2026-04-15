@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 from nicegui import ui
 
@@ -8,12 +9,18 @@ from stoiquent.agent.loop import run_agent_loop
 from stoiquent.agent.session import Session
 from stoiquent.models import StreamChunk
 
+if TYPE_CHECKING:
+    from stoiquent.persistence import ConversationStore
+
 logger = logging.getLogger(__name__)
 
 
 class ChatPanel:
-    def __init__(self, session: Session) -> None:
+    def __init__(
+        self, session: Session, store: ConversationStore | None = None
+    ) -> None:
         self.session = session
+        self._store = store
         self._messages_container: ui.column | None = None
         self._input: ui.input | None = None
         self._sending: bool = False
@@ -92,5 +99,13 @@ class ChatPanel:
         finally:
             self._sending = False
             spinner.set_visibility(False)
+
+        if self._store is not None:
+            try:
+                self._store.save_background(
+                    self.session.id, self.session.messages
+                )
+            except Exception:
+                logger.warning("Failed to schedule background save", exc_info=True)
 
         ui.run_javascript("window.scrollTo(0, document.body.scrollHeight)")

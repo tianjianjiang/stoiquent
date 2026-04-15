@@ -5,6 +5,7 @@ from nicegui import app, ui
 from stoiquent.agent.session import Session
 from stoiquent.llm.openai_compat import OpenAICompatProvider
 from stoiquent.models import AppConfig
+from stoiquent.persistence import ConversationStore
 from stoiquent.sandbox.detect import detect_backend
 from stoiquent.skills.catalog import SkillCatalog
 from stoiquent.skills.discovery import discover_skills
@@ -41,9 +42,18 @@ def start(config: AppConfig) -> None:
         tool_timeout=config.sandbox.tool_timeout,
     )
 
+    store = ConversationStore(config.persistence)
+    try:
+        store.ensure_dirs()
+    except OSError as e:
+        raise SystemExit(
+            f"Cannot create persistence directory at "
+            f"{config.persistence.data_dir}: {e}"
+        ) from e
+
     @ui.page("/")
     async def _main_page() -> None:  # pragma: no cover
-        layout.render(session)
+        await layout.render(session, store)
 
     kwargs: dict = {
         "title": "Stoiquent",
