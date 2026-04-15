@@ -15,8 +15,9 @@ async def test_should_render_layout_with_header_and_sidebar(user: User) -> None:
 
     @ui.page("/test-layout")
     async def page() -> None:
-        layout.render(session)
+        await layout.render(session)
 
     await user.open("/test-layout")
     await user.should_see("Stoiquent")
     await user.should_see("Sessions")
+    await user.should_see("No persistence configured")

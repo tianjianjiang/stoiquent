@@ -12,7 +12,7 @@ from tests.conftest import FakeProvider
 def test_should_render_app_header(screen: Screen, fake_session: Session) -> None:
     @ui.page("/")
     async def page() -> None:
-        layout.render(fake_session)
+        await layout.render(fake_session)
 
     screen.open("/")
     screen.should_contain("Stoiquent")
@@ -21,7 +21,7 @@ def test_should_render_app_header(screen: Screen, fake_session: Session) -> None
 def test_should_render_sidebar(screen: Screen, fake_session: Session) -> None:
     @ui.page("/")
     async def page() -> None:
-        layout.render(fake_session)
+        await layout.render(fake_session)
 
     screen.open("/")
     screen.should_contain("Sessions")
@@ -30,7 +30,7 @@ def test_should_render_sidebar(screen: Screen, fake_session: Session) -> None:
 def test_should_render_chat_input(screen: Screen, fake_session: Session) -> None:
     @ui.page("/")
     async def page() -> None:
-        layout.render(fake_session)
+        await layout.render(fake_session)
 
     screen.open("/")
     screen.should_contain("Send")
