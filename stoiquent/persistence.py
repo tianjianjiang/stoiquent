@@ -173,6 +173,10 @@ class ConversationStore:
         summaries.sort(key=lambda s: s.updated_at, reverse=True)
         return summaries
 
+    async def load_async(self, session_id: str) -> ConversationRecord | None:
+        """Async variant of load via thread pool."""
+        return await asyncio.to_thread(self.load, session_id)
+
     async def list_conversations_async(self) -> list[ConversationSummary]:
         """Async variant of list_conversations via thread pool."""
         return await asyncio.to_thread(self.list_conversations)

@@ -5,7 +5,7 @@ from nicegui import ui
 from nicegui.testing import User
 
 from stoiquent.agent.session import Session
-from stoiquent.models import StreamChunk
+from stoiquent.models import Message, StreamChunk, ToolCall, ToolCallResult
 from stoiquent.ui.chat import ChatPanel
 from tests.conftest import FakeProvider
 
@@ -192,3 +192,97 @@ async def test_should_display_generic_error_message(
 
     # Clear ERROR logs so NiceGUI's teardown check does not fail
     caplog.clear()
+
+
+@pytest.mark.asyncio
+async def test_should_reload_messages(user: User) -> None:
+    provider = FakeProvider()
+    session = Session(provider=provider)
+    session.messages = [
+        Message(role="user", content="Hello"),
+        Message(role="assistant", content="Hi there!"),
+    ]
+    panel = ChatPanel(session)
+
+    @ui.page("/test-reload")
+    async def page() -> None:
+        panel.render()
+        panel.reload_messages()
+
+    await user.open("/test-reload")
+    await user.should_see("Hello")
+    await user.should_see("Hi there!")
+
+
+@pytest.mark.asyncio
+async def test_should_reload_messages_with_reasoning(user: User) -> None:
+    provider = FakeProvider()
+    session = Session(provider=provider)
+    session.messages = [
+        Message(role="user", content="Why?"),
+        Message(role="assistant", content="Because.", reasoning="Let me think..."),
+    ]
+    panel = ChatPanel(session)
+
+    @ui.page("/test-reload-reason")
+    async def page() -> None:
+        panel.render()
+        panel.reload_messages()
+
+    await user.open("/test-reload-reason")
+    await user.should_see("Because.")
+    await user.should_see("Reasoning")
+
+
+@pytest.mark.asyncio
+async def test_should_reload_messages_with_tool_calls(user: User) -> None:
+    provider = FakeProvider()
+    session = Session(provider=provider)
+    session.messages = [
+        Message(role="user", content="Greet Alice"),
+        Message(
+            role="assistant",
+            content=None,
+            tool_calls=[ToolCall(id="tc1", name="greet", arguments={"name": "Alice"})],
+        ),
+        Message(role="tool", content="Hello, Alice!", tool_call_id="tc1"),
+        Message(role="assistant", content="Done!"),
+    ]
+    panel = ChatPanel(session)
+
+    @ui.page("/test-reload-tc")
+    async def page() -> None:
+        panel.render()
+        panel.reload_messages()
+
+    await user.open("/test-reload-tc")
+    await user.should_see("greet")
+    await user.should_see("Done!")
+
+
+@pytest.mark.asyncio
+async def test_should_render_tool_card_during_stream(user: User) -> None:
+    tc = ToolCall(id="tc1", name="search", arguments={"q": "test"})
+    chunks = [
+        StreamChunk(tool_call_start=tc),
+        StreamChunk(
+            tool_call_result=ToolCallResult(
+                tool_call_id="tc1", name="search", content="Found it"
+            )
+        ),
+        StreamChunk(content_delta="Here are the results."),
+        StreamChunk(finish_reason="stop"),
+    ]
+    provider = FakeProvider(chunks=chunks)
+    session = Session(provider=provider)
+    panel = ChatPanel(session)
+
+    @ui.page("/test-tc-stream")
+    async def page() -> None:
+        panel.render()
+
+    await user.open("/test-tc-stream")
+    user.find("Type a message...").type("Search for test")
+    user.find("Send").click()
+    await user.should_see("search")
+    await user.should_see("Here are the results.")

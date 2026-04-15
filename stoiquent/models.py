@@ -19,11 +19,19 @@ class Message(BaseModel):
     tool_call_id: str | None = None
 
 
+class ToolCallResult(BaseModel):
+    tool_call_id: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    content: str = ""
+
+
 class StreamChunk(BaseModel):
     content_delta: str = ""
     reasoning_delta: str = ""
     tool_calls_delta: list[dict[str, Any]] | None = None
     finish_reason: str | None = None
+    tool_call_start: ToolCall | None = None
+    tool_call_result: ToolCallResult | None = None
 
 
 class ProviderConfig(BaseModel):

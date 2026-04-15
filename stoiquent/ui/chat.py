@@ -8,6 +8,7 @@ from nicegui import ui
 from stoiquent.agent.loop import run_agent_loop
 from stoiquent.agent.session import Session
 from stoiquent.models import StreamChunk
+from stoiquent.ui.tool_card import render_tool_call, render_tool_result
 
 if TYPE_CHECKING:
     from stoiquent.persistence import ConversationStore
@@ -37,6 +38,34 @@ class ChatPanel:
                     .on("keydown.enter", self._send)
                 )
                 ui.button("Send", on_click=self._send).props("flat")
+
+    def reload_messages(self) -> None:
+        """Re-render the chat history from session.messages."""
+        if self._messages_container is None:
+            return
+        self._messages_container.clear()
+        with self._messages_container:
+            for msg in self.session.messages:
+                if msg.role == "user":
+                    ui.chat_message(
+                        text=msg.content or "", name="You", sent=True
+                    )
+                elif msg.role == "assistant":
+                    ui.chat_message(name="Assistant", sent=False)
+                    if msg.tool_calls:
+                        for tc in msg.tool_calls:
+                            render_tool_call(tc)
+                    if msg.content:
+                        ui.markdown(msg.content)
+                    if msg.reasoning:
+                        with ui.expansion(
+                            "Reasoning", icon="psychology"
+                        ).classes("text-xs"):
+                            ui.markdown(msg.reasoning)
+                elif msg.role == "tool":
+                    render_tool_result(
+                        msg.tool_call_id or "", msg.content or ""
+                    )
 
     async def _send(self) -> None:
         if self._sending:
@@ -85,6 +114,17 @@ class ChatPanel:
                     has_reasoning = True
                     reasoning_expansion.set_visibility(True)
                 reasoning_md.set_content(reasoning_so_far)
+
+            if chunk.tool_call_start:
+                with self._messages_container:
+                    render_tool_call(chunk.tool_call_start)
+
+            if chunk.tool_call_result:
+                with self._messages_container:
+                    render_tool_result(
+                        chunk.tool_call_result.tool_call_id,
+                        chunk.tool_call_result.content,
+                    )
 
         try:
             await run_agent_loop(self.session, user_text, on_chunk)
