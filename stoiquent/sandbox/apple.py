@@ -17,10 +17,17 @@ _SAFE_ENV_KEY = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _BLOCKED_ENV_KEYS = frozenset({"LD_PRELOAD", "LD_LIBRARY_PATH"})
 
 
-class OCIBackend(SandboxBackend):
-    """OCI container backend supporting Docker, Podman, and Finch."""
+class AppleContainersBackend(SandboxBackend):
+    """Apple Containers backend for macOS 26+.
 
-    def __init__(self, runtime_path: str, image: str = "python:3.12-slim") -> None:
+    Uses the `container` CLI from Apple's open-source container runtime.
+    Provides VM-level isolation via Virtualization.framework — stronger
+    than OCI containers (no shared kernel).
+    """
+
+    def __init__(
+        self, runtime_path: str = "/opt/local/bin/container", image: str = "alpine:latest"
+    ) -> None:
         self._runtime = runtime_path
         self._image = image
 
@@ -38,13 +45,12 @@ class OCIBackend(SandboxBackend):
             "run",
             "--rm",
             "--name", container_name,
-            "--memory", f"{policy.memory_mb}m",
-            "--pids-limit", str(policy.max_pids),
+            "--memory", f"{policy.memory_mb}M",
             "--cpus", "1",
-            "--network", policy.network,
-            "--security-opt=no-new-privileges",
-            "--cap-drop=ALL",
         ]
+
+        if policy.network == "none":
+            args.extend(["--network", "none"])
 
         for mount in policy.bind_mounts:
             resolved = str(Path(mount.source).resolve())
@@ -167,7 +173,7 @@ class OCIBackend(SandboxBackend):
             _, stderr = await asyncio.wait_for(proc.communicate(), timeout=5)
             if proc.returncode != 0:
                 logger.error(
-                    "docker kill returned %d for %s: %s",
+                    "container kill returned %d for %s: %s",
                     proc.returncode,
                     container_name,
                     stderr.decode(errors="replace").strip() if stderr else "",
@@ -190,7 +196,7 @@ class OCIBackend(SandboxBackend):
         try:
             result = await asyncio.to_thread(
                 subprocess.run,
-                [self._runtime, "version"],
+                [self._runtime, "--version"],
                 capture_output=True,
                 timeout=10,
             )
@@ -200,5 +206,4 @@ class OCIBackend(SandboxBackend):
             return False
 
     def name(self) -> str:
-        runtime_name = Path(self._runtime).name
-        return f"oci:{runtime_name}"
+        return "apple-containers"

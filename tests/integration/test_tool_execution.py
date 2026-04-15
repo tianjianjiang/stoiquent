@@ -8,6 +8,7 @@ from stoiquent.agent.loop import run_agent_loop
 from stoiquent.agent.session import Session
 from stoiquent.llm.openai_compat import OpenAICompatProvider
 from stoiquent.models import StreamChunk
+from stoiquent.sandbox.detect import detect_backend
 from stoiquent.sandbox.noop import NoopBackend
 from stoiquent.sandbox.policy import default_policy
 from stoiquent.skills.catalog import SkillCatalog
@@ -128,3 +129,77 @@ async def test_should_pass_arguments_to_tool(
         f"Expected tool message, got roles: {[m.role for m in session.messages]}"
     )
     assert any("Hello, Bob!" in (m.content or "") for m in tool_msgs)
+
+
+def _make_apple_tool_session(provider: OpenAICompatProvider) -> Session | None:
+    """Create a session with Apple Containers backend. Returns None if unavailable."""
+    import os
+    import shutil
+
+    from stoiquent.sandbox.apple import AppleContainersBackend
+
+    container_path = shutil.which("container") or "/opt/local/bin/container"
+    if not os.path.isfile(container_path):
+        return None
+
+    skill = Skill(
+        meta=SkillMeta(
+            name="hello-world",
+            description="A simple greeting skill for testing",
+            tools=[
+                SkillToolDef(
+                    name="greet",
+                    description="Greet someone by name.",
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string", "description": "Name to greet"}
+                        },
+                        "required": ["name"],
+                    },
+                )
+            ],
+        ),
+        path=FIXTURES / "hello-world",
+        instructions="Use the greet tool when asked to greet someone.",
+        active=True,
+    )
+    catalog = SkillCatalog({"hello-world": skill})
+    sandbox = AppleContainersBackend(container_path, image="python:3.12-slim")
+
+    return Session(
+        provider=provider,
+        catalog=catalog,
+        sandbox=sandbox,
+        sandbox_policy=default_policy(),
+        iteration_limit=5,
+        tool_timeout=60.0,
+    )
+
+
+@skip_no_ollama
+@skip_no_model
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_tool_execution_with_apple_containers(
+    provider: OpenAICompatProvider,
+) -> None:
+    """Tool dispatch through real Apple Containers VM sandbox."""
+    session = _make_apple_tool_session(provider)
+    if session is None:
+        pytest.skip("Apple Containers not available")
+
+    async def noop(_chunk: StreamChunk) -> None:
+        pass
+
+    await run_agent_loop(
+        session,
+        "Use the greet tool to greet Alice. You must call the greet tool.",
+        noop,
+    )
+
+    tool_msgs = [m for m in session.messages if m.role == "tool"]
+    assert len(tool_msgs) >= 1, (
+        f"Expected tool message, got roles: {[m.role for m in session.messages]}"
+    )
+    assert any("Hello, Alice!" in (m.content or "") for m in tool_msgs)
