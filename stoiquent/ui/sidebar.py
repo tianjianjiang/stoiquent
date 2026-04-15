@@ -64,9 +64,13 @@ class Sidebar:
         with self._sessions_container:
             for summary in summaries:
                 sid = summary.id
+
+                async def on_click(_: object, s: str = sid) -> None:
+                    await self._load_session(s)
+
                 ui.label(summary.title or sid).classes(
                     "text-caption cursor-pointer hover:bg-gray-100"
-                ).on("click", lambda _, s=sid: self._load_session(s))
+                ).on("click", on_click)
 
     async def _load_session(self, session_id: str) -> None:
         if self._store is None:
@@ -75,7 +79,12 @@ class Sidebar:
             self._store.save_background(
                 self._session.id, self._session.messages
             )
-        record = await self._store.load_async(session_id)
+        try:
+            record = await self._store.load_async(session_id)
+        except Exception:
+            logger.warning("Failed to load conversation: %s", session_id, exc_info=True)
+            ui.notify("Could not load conversation", type="warning")
+            return
         if record is None:
             ui.notify("Could not load conversation", type="warning")
             return
