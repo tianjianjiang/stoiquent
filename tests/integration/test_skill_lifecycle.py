@@ -91,7 +91,7 @@ def test_should_resolve_and_build_command() -> None:
 def test_should_detect_backend_on_auto() -> None:
     sandbox_config = SandboxConfig(backend="auto")
     backend = detect_backend(sandbox_config)
-    assert backend.name() in ("noop", "oci:docker", "oci:podman", "oci:finch")
+    assert backend.name() in ("noop", "apple-containers", "oci:docker", "oci:podman", "oci:finch")
     assert await_is_available(backend)
 
 

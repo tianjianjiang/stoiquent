@@ -24,8 +24,9 @@ stoiquent/
 |   +-- sandbox/     base.py, detect.py, policy.py, oci.py,
 |   |                apple_container.py, firecracker.py, gvisor.py,
 |   |                bwrap.py, nsjail.py, noop.py
-|   +-- persistence/ conversations.py, tasks.py
-|   +-- ui/          layout.py, chat.py, files.py, tasks.py, skills_panel.py
+|   +-- persistence/ conversations.py, projects.py
+|   +-- ui/          layout.py, chat.py, sidebar.py, file_browser.py,
+|   |                project_panel.py, tool_card.py
 +-- skills/hello-world/SKILL.md
 +-- tests/
 ```

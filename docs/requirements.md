@@ -161,10 +161,11 @@ Inspired by [Claude Cowork](https://www.anthropic.com/product/claude-cowork) (UX
 <required>
 
 - [MUST] NiceGUI (FastAPI + Vue/Quasar); native window (pywebview) or browser mode via config
-- [MUST] Layout: sidebar (20%) with session list + Files/Tasks/Skills tabs; main content (80%) with chat
+- [MUST] Layout: sidebar (20%) with session list + Files/Projects/Skills tabs; main content (80%) with chat
 - [MUST] Chat: role-based styling, per-message collapsible reasoning, inline tool call cards, streaming, slash commands, file attachment
-- [MUST] File browser: tree view, click to preview
-- [MUST] Task panel: Todo / In Progress / Done
+- [MUST] File browser: tree view of project folder, click to preview
+- [MUST] Project model: folder + instructions + scoped memory. Sessions grouped by project. Inspired by [Claude Cowork Projects](https://support.claude.com/en/articles/14116274-organize-your-tasks-with-projects-in-claude-cowork)
+- [MUST] Session status: running / completed / failed. Sidebar filterable by project and status
 - [MUST] Skills panel: discovered skills with activate/deactivate toggle
 - [SHOULD] Provider switching via dropdown
 
@@ -174,10 +175,11 @@ Inspired by [Claude Cowork](https://www.anthropic.com/product/claude-cowork) (UX
 
 <required>
 
-- [MUST] JSON files: one per conversation session, single task list
+- [MUST] JSON files: one per conversation session, one per project
 - [MUST] Data directory: `~/.stoiquent/`, configurable via `persistence.data_dir`
 - [MUST] Auto-save after each message exchange
-- [MUST] List and load past conversations in sidebar
+- [MUST] List and load past conversations in sidebar, grouped by project
+- [MUST] Project persistence: `~/.stoiquent/projects/{project_id}.json` with folder path, instructions, and scoped memory
 
 </required>
 
@@ -215,5 +217,5 @@ Inspired by [Claude Cowork](https://www.anthropic.com/product/claude-cowork) (UX
 - **Walking skeleton** (2.1, 2.2, 2.6, 2.8): `uv run stoiquent run` launches NiceGUI; chat round-trip with Ollama works
 - **Skills + sandbox** (2.3, 2.5): Activate skill with script, trigger tool use, verify sandboxed execution
 - **MCP Apps** (2.4): Skill with `assets/app.html` serves via `ui://` with `_meta.ui.resourceUri`
-- **Full UI** (2.6, 2.7): File browsing, task management, saved conversations, skill activation panel
+- **Full UI** (2.6, 2.7): File browsing, project management, saved conversations grouped by project, skill activation panel
 - **Sandbox isolation** (2.5, 3): Writes outside allowed paths fail; memory limits enforced; network blocked when policy=none

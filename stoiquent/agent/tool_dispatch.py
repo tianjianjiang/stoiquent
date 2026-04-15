@@ -67,6 +67,18 @@ async def _execute_tool(
     if tool_call.arguments:
         command.append(json.dumps(tool_call.arguments))
 
+    # For container backends, rewrite absolute paths to be relative to workdir
+    # since the skill directory is mounted inside the container
+    if sandbox.name() != "noop":
+        skill_dir = str(skill.path)
+        rewritten = []
+        for arg in command:
+            if arg.startswith(skill_dir + "/") or arg == skill_dir:
+                rewritten.append("." + arg[len(skill_dir):])
+            else:
+                rewritten.append(arg)
+        command = rewritten
+
     logger.info("Executing tool '%s' via %s", tool_call.name, sandbox.name())
 
     result = await sandbox.execute(
