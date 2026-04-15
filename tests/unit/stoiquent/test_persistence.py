@@ -67,9 +67,7 @@ def test_save_sync_preserves_created_at_on_update(tmp_path: Path) -> None:
 
     time.sleep(0.01)
 
-    more_messages = _sample_messages() + [
-        Message(role="user", content="Another question"),
-    ]
+    more_messages = [*_sample_messages(), Message(role="user", content="Another question")]
     store.save_sync("abc123", more_messages)
 
     second_data = json.loads(path.read_text(encoding="utf-8"))
