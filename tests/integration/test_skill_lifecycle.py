@@ -88,10 +88,10 @@ def test_should_resolve_and_build_command() -> None:
 
 
 @pytest.mark.integration
-def test_should_detect_noop_backend() -> None:
+def test_should_detect_backend_on_auto() -> None:
     sandbox_config = SandboxConfig(backend="auto")
     backend = detect_backend(sandbox_config)
-    assert backend.name() == "noop"
+    assert backend.name() in ("noop", "oci:docker", "oci:podman", "oci:finch")
     assert await_is_available(backend)
 
 
@@ -120,7 +120,7 @@ async def test_should_execute_tool_via_sandbox() -> None:
     catalog = SkillCatalog(skills)
     catalog.activate("hello-world")
 
-    sandbox_config = SandboxConfig(backend="auto")
+    sandbox_config = SandboxConfig(backend="none")
     sandbox = detect_backend(sandbox_config)
     policy = default_policy()
 
@@ -137,7 +137,7 @@ async def test_should_execute_tool_without_arguments() -> None:
     catalog = SkillCatalog(skills)
     catalog.activate("hello-world")
 
-    sandbox = detect_backend(SandboxConfig(backend="auto"))
+    sandbox = detect_backend(SandboxConfig(backend="none"))
     tc = ToolCall(id="call_1", name="greet", arguments={})
     result = await dispatch_tool_call(tc, catalog, sandbox, default_policy(), 30.0)
     assert "Hello, World!" in result
@@ -151,7 +151,7 @@ async def test_should_return_error_for_unknown_tool() -> None:
     catalog = SkillCatalog(skills)
     catalog.activate("hello-world")
 
-    sandbox = detect_backend(SandboxConfig(backend="auto"))
+    sandbox = detect_backend(SandboxConfig(backend="none"))
     tc = ToolCall(id="call_1", name="nonexistent", arguments={})
     result = await dispatch_tool_call(tc, catalog, sandbox, default_policy(), 30.0)
     assert "Error" in result
@@ -222,7 +222,7 @@ Instructions here.
     catalog = SkillCatalog(skills)
     catalog.activate("multi")
 
-    sandbox = detect_backend(SandboxConfig(backend="auto"))
+    sandbox = detect_backend(SandboxConfig(backend="none"))
 
     tc_a = ToolCall(id="call_1", name="tool_a", arguments={})
     result_a = await_dispatch(tc_a, catalog, sandbox)
@@ -257,7 +257,7 @@ async def test_should_execute_bash_script_via_sandbox(tmp_path: Path) -> None:
     catalog = SkillCatalog(skills)
     catalog.activate("bash-skill")
 
-    sandbox = detect_backend(SandboxConfig(backend="auto"))
+    sandbox = detect_backend(SandboxConfig(backend="none"))
     tc = ToolCall(id="call_1", name="hello_bash", arguments={})
     result = await dispatch_tool_call(tc, catalog, sandbox, default_policy(), 30.0)
     assert "Bash hello!" in result
