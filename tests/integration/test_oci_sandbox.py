@@ -73,6 +73,9 @@ async def test_oci_timeout_kills_container() -> None:
 async def test_oci_bind_mount_readable(tmp_path: Path) -> None:
     test_file = tmp_path / "test.txt"
     test_file.write_text("mount-test-data")
+    # Make file world-readable so container (cap-drop=ALL) can read it
+    test_file.chmod(0o644)
+    tmp_path.chmod(0o755)
 
     backend = OCIBackend(_DOCKER_PATH, image="alpine:latest")
     policy = SandboxPolicy(bind_mounts=[
