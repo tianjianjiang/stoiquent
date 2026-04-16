@@ -1,36 +1,46 @@
+"""E2E tests verifying the app renders correctly.
+
+Uses the User fixture (NiceGUI's recommended approach).
+"""
+
 from __future__ import annotations
 
-import pytest
 from nicegui import ui
-from nicegui.testing import Screen
+from nicegui.testing import User
 
 from stoiquent.agent.session import Session
 from stoiquent.ui import layout
 from tests.conftest import FakeProvider
 
 
-def test_should_render_app_header(screen: Screen, fake_session: Session) -> None:
+async def test_should_render_app_header(user: User) -> None:
+    session = Session(provider=FakeProvider())
+
     @ui.page("/")
     async def page() -> None:
-        await layout.render(fake_session)
+        await layout.render(session)
 
-    screen.open("/")
-    screen.should_contain("Stoiquent")
+    await user.open("/")
+    await user.should_see("Stoiquent")
 
 
-def test_should_render_sidebar(screen: Screen, fake_session: Session) -> None:
+async def test_should_render_sidebar(user: User) -> None:
+    session = Session(provider=FakeProvider())
+
     @ui.page("/")
     async def page() -> None:
-        await layout.render(fake_session)
+        await layout.render(session)
 
-    screen.open("/")
-    screen.should_contain("Sessions")
+    await user.open("/")
+    await user.should_see("Sessions")
 
 
-def test_should_render_chat_input(screen: Screen, fake_session: Session) -> None:
+async def test_should_render_chat_input(user: User) -> None:
+    session = Session(provider=FakeProvider())
+
     @ui.page("/")
     async def page() -> None:
-        await layout.render(fake_session)
+        await layout.render(session)
 
-    screen.open("/")
-    screen.should_contain("Send")
+    await user.open("/")
+    await user.should_see("Send")

@@ -30,14 +30,15 @@ class ChatPanel:
         with ui.column().classes("w-full flex-grow gap-0"):
             self._messages_container = ui.column().classes(
                 "w-full flex-grow gap-2 p-4 overflow-auto"
-            )
+            ).mark("messages")
             with ui.row().classes("w-full p-4 gap-2 items-center border-t"):
                 self._input = (
                     ui.input(placeholder="Type a message...")
                     .classes("flex-grow")
                     .on("keydown.enter", self._send)
+                    .mark("chat-input")
                 )
-                ui.button("Send", on_click=self._send).props("flat")
+                ui.button("Send", on_click=self._send).props("flat").mark("send-btn")
 
     def reload_messages(self) -> None:
         """Re-render the chat history from session.messages."""

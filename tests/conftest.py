@@ -2,11 +2,17 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
+from pathlib import Path
 
-import pytest
-
-from stoiquent.agent.session import Session
-from stoiquent.models import Message, StreamChunk
+from stoiquent.models import (
+    AppConfig,
+    Message,
+    PersistenceConfig,
+    ProviderConfig,
+    StreamChunk,
+)
+from stoiquent.persistence import ConversationStore
+from stoiquent.skills.models import Skill, SkillMeta
 
 pytest_plugins = ["nicegui.testing.plugin"]
 
@@ -27,16 +33,37 @@ class FakeProvider:
             yield chunk
 
 
-@pytest.fixture
-def fake_provider() -> FakeProvider:
-    return FakeProvider(
-        chunks=[
-            StreamChunk(content_delta="Hello from fake!"),
-            StreamChunk(finish_reason="stop"),
-        ]
+def make_store(tmp_path: Path) -> ConversationStore:
+    """Create a ConversationStore backed by a temporary directory."""
+    config = PersistenceConfig(data_dir=str(tmp_path))
+    store = ConversationStore(config)
+    store.ensure_dirs()
+    return store
+
+
+def two_provider_config(
+    default: str = "local-qwen", second: str = "other"
+) -> AppConfig:
+    """Create an AppConfig with two providers for testing."""
+    return AppConfig(
+        default_provider=default,
+        providers={
+            "local-qwen": ProviderConfig(
+                base_url="http://localhost:11434/v1", model="qwen3:32b"
+            ),
+            second: ProviderConfig(
+                base_url="http://localhost:11434/v1", model="other-model"
+            ),
+        },
     )
 
 
-@pytest.fixture
-def fake_session(fake_provider: FakeProvider) -> Session:
-    return Session(provider=fake_provider)
+def make_skill(name: str, description: str, active: bool = False) -> Skill:
+    """Create a Skill instance for testing."""
+    return Skill(
+        meta=SkillMeta(name=name, description=description),
+        path=Path("/fake"),
+        instructions="",
+        active=active,
+        source="config",
+    )

@@ -1,35 +1,18 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from nicegui import ui
 from nicegui.testing import User
 
 from stoiquent.agent.session import Session
-from stoiquent.models import Message, PersistenceConfig
-from stoiquent.persistence import ConversationStore
+from stoiquent.models import Message
 from stoiquent.skills.catalog import SkillCatalog
-from stoiquent.skills.models import Skill, SkillMeta
 from stoiquent.ui.sidebar import Sidebar
-from tests.conftest import FakeProvider
-
-
-def _make_store(tmp_path: Path) -> ConversationStore:
-    config = PersistenceConfig(data_dir=str(tmp_path))
-    store = ConversationStore(config)
-    store.ensure_dirs()
-    return store
-
-
-def _make_skill(name: str, description: str, active: bool = False) -> Skill:
-    return Skill(
-        meta=SkillMeta(name=name, description=description),
-        path=Path("/fake"),
-        instructions="",
-        active=active,
-        source="config",
-    )
+from tests.conftest import FakeProvider, make_skill, make_store
 
 
 @pytest.mark.asyncio
@@ -37,7 +20,7 @@ async def test_should_render_session_and_skills_tabs(
     user: User, tmp_path: Path
 ) -> None:
     session = Session(provider=FakeProvider())
-    store = _make_store(tmp_path)
+    store = make_store(tmp_path)
 
     @ui.page("/test-tabs")
     async def page() -> None:
@@ -54,7 +37,7 @@ async def test_should_show_new_chat_button(
     user: User, tmp_path: Path
 ) -> None:
     session = Session(provider=FakeProvider())
-    store = _make_store(tmp_path)
+    store = make_store(tmp_path)
 
     @ui.page("/test-new")
     async def page() -> None:
@@ -69,7 +52,7 @@ async def test_should_show_new_chat_button(
 async def test_should_list_sessions_from_store(
     user: User, tmp_path: Path
 ) -> None:
-    store = _make_store(tmp_path)
+    store = make_store(tmp_path)
     store.save_sync("s1", [Message(role="user", content="First chat")])
     store.save_sync("s2", [Message(role="user", content="Second chat")])
 
@@ -88,8 +71,8 @@ async def test_should_list_sessions_from_store(
 @pytest.mark.asyncio
 async def test_should_show_skills_with_toggles(user: User) -> None:
     catalog = SkillCatalog({
-        "greet": _make_skill("greet", "Greeting skill", active=True),
-        "search": _make_skill("search", "Search skill", active=False),
+        "greet": make_skill("greet", "Greeting skill", active=True),
+        "search": make_skill("search", "Search skill", active=False),
     })
     session = Session(provider=FakeProvider(), catalog=catalog)
 
@@ -136,7 +119,7 @@ async def test_should_show_empty_catalog_message(user: User) -> None:
 async def test_new_session_calls_callback(
     user: User, tmp_path: Path
 ) -> None:
-    store = _make_store(tmp_path)
+    store = make_store(tmp_path)
     session = Session(provider=FakeProvider())
     session.messages = [Message(role="user", content="Old message")]
     received: list[tuple[str, list]] = []
@@ -163,7 +146,7 @@ async def test_new_session_calls_callback(
 async def test_load_session_calls_callback(
     user: User, tmp_path: Path
 ) -> None:
-    store = _make_store(tmp_path)
+    store = make_store(tmp_path)
     store.save_sync("target", [Message(role="user", content="Loaded")])
 
     session = Session(provider=FakeProvider())
@@ -192,7 +175,7 @@ async def test_load_session_calls_callback(
 async def test_load_nonexistent_session_does_not_switch(
     user: User, tmp_path: Path
 ) -> None:
-    store = _make_store(tmp_path)
+    store = make_store(tmp_path)
     session = Session(provider=FakeProvider())
     original_id = session.id
     received: list[tuple[str, list]] = []
@@ -218,7 +201,7 @@ async def test_load_nonexistent_session_does_not_switch(
 @pytest.mark.asyncio
 async def test_toggle_skill(user: User) -> None:
     catalog = SkillCatalog({
-        "greet": _make_skill("greet", "Greeting", active=False),
+        "greet": make_skill("greet", "Greeting", active=False),
     })
     session = Session(provider=FakeProvider(), catalog=catalog)
 
@@ -236,3 +219,223 @@ async def test_toggle_skill(user: User) -> None:
 
     sidebar_ref[0]._toggle_skill("greet", False)
     assert catalog.skills["greet"].active is False
+
+
+async def test_toggle_nonexistent_skill(user: User) -> None:
+    catalog = SkillCatalog({
+        "greet": make_skill("greet", "Greeting", active=False),
+    })
+    session = Session(provider=FakeProvider(), catalog=catalog)
+
+    sidebar_ref: list[Sidebar] = []
+
+    @ui.page("/test-toggle-fail")
+    async def page() -> None:
+        s = Sidebar(session, None, lambda *_: None)
+        sidebar_ref.append(s)
+        await s.render()
+
+    await user.open("/test-toggle-fail")
+    # Toggling a nonexistent skill should not raise
+    sidebar_ref[0]._toggle_skill("nonexistent", True)
+    assert catalog.skills["greet"].active is False
+
+
+# --- Error-handling coverage ---
+
+
+async def test_refresh_sessions_handles_load_failure(
+    user: User, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Cover sidebar.py:59-62: _refresh_sessions exception path."""
+    store = make_store(tmp_path)
+    store.list_conversations_async = AsyncMock(side_effect=RuntimeError("DB error"))
+
+    session = Session(provider=FakeProvider())
+    sidebar_ref: list[Sidebar] = []
+
+    @ui.page("/test-refresh-fail")
+    async def page() -> None:
+        s = Sidebar(session, store, lambda *_: None)
+        sidebar_ref.append(s)
+        await s.render()
+
+    with caplog.at_level(logging.WARNING):
+        await user.open("/test-refresh-fail")
+    await user.should_see("Failed to load")
+    assert "Failed to load conversations" in caplog.text
+
+
+async def test_load_session_handles_exception(
+    user: User, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Cover sidebar.py:84-87: _load_session exception path."""
+    store = make_store(tmp_path)
+    store.load_async = AsyncMock(side_effect=RuntimeError("Load failed"))
+
+    session = Session(provider=FakeProvider())
+    received: list[tuple[str, list]] = []
+
+    def on_switch(new_id: str, new_messages: list[Message]) -> None:
+        received.append((new_id, new_messages))
+
+    sidebar_ref: list[Sidebar] = []
+
+    @ui.page("/test-load-exception")
+    async def page() -> None:
+        s = Sidebar(session, store, on_switch)
+        sidebar_ref.append(s)
+        await s.render()
+
+    await user.open("/test-load-exception")
+    with caplog.at_level(logging.WARNING), patch(
+        "stoiquent.ui.sidebar.ui.notify"
+    ) as mock_notify:
+        await sidebar_ref[0]._load_session("bad-id")
+
+    assert len(received) == 0
+    store.load_async.assert_called_once_with("bad-id")
+    assert "Failed to load conversation" in caplog.text
+    mock_notify.assert_called_once_with(
+        "Could not load conversation", type="warning"
+    )
+
+
+async def test_load_session_with_none_store(user: User) -> None:
+    """Cover sidebar.py:77: _load_session early return when store is None."""
+    session = Session(provider=FakeProvider())
+    received: list[tuple[str, list]] = []
+
+    sidebar_ref: list[Sidebar] = []
+
+    @ui.page("/test-load-none-store")
+    async def page() -> None:
+        s = Sidebar(session, None, lambda *_: received.append(("x", [])))
+        sidebar_ref.append(s)
+        await s.render()
+
+    await user.open("/test-load-none-store")
+    await sidebar_ref[0]._load_session("any-id")
+
+    assert len(received) == 0
+
+
+async def test_load_session_saves_old_messages(
+    user: User, tmp_path: Path
+) -> None:
+    """Cover sidebar.py:79: save_background called before switching sessions."""
+    store = make_store(tmp_path)
+    store.save_sync("target", [Message(role="user", content="Target")])
+    store.save_background = Mock()
+
+    session = Session(provider=FakeProvider())
+    session.messages = [Message(role="user", content="Old message")]
+    original_id = session.id
+
+    received: list[tuple[str, list]] = []
+
+    def on_switch(new_id: str, new_messages: list[Message]) -> None:
+        received.append((new_id, new_messages))
+
+    sidebar_ref: list[Sidebar] = []
+
+    @ui.page("/test-load-saves")
+    async def page() -> None:
+        s = Sidebar(session, store, on_switch)
+        sidebar_ref.append(s)
+        await s.render()
+
+    await user.open("/test-load-saves")
+    await sidebar_ref[0]._load_session("target")
+
+    store.save_background.assert_called_once_with(
+        original_id, [Message(role="user", content="Old message")]
+    )
+    assert len(received) == 1
+    assert received[0][0] == "target"
+
+
+async def test_toggle_skill_notifies_on_failure(user: User) -> None:
+    """Cover sidebar.py:128: notification when skill toggle fails."""
+    catalog = SkillCatalog({
+        "greet": make_skill("greet", "Greeting", active=False),
+    })
+    catalog.activate = Mock(return_value=False)
+
+    session = Session(provider=FakeProvider(), catalog=catalog)
+    sidebar_ref: list[Sidebar] = []
+
+    @ui.page("/test-toggle-fail-notify")
+    async def page() -> None:
+        s = Sidebar(session, None, lambda *_: None)
+        sidebar_ref.append(s)
+        await s.render()
+
+    await user.open("/test-toggle-fail-notify")
+    with patch("stoiquent.ui.sidebar.ui.notify") as mock_notify:
+        sidebar_ref[0]._toggle_skill("greet", True)
+    catalog.activate.assert_called_once_with("greet")
+    mock_notify.assert_called_once_with(
+        "Failed to activate skill 'greet'", type="warning"
+    )
+
+
+async def test_toggle_skill_notifies_on_deactivate_failure(user: User) -> None:
+    """Cover sidebar.py:131: deactivate branch of toggle failure notification."""
+    catalog = SkillCatalog({
+        "greet": make_skill("greet", "Greeting", active=True),
+    })
+    catalog.deactivate = Mock(return_value=False)
+
+    session = Session(provider=FakeProvider(), catalog=catalog)
+    sidebar_ref: list[Sidebar] = []
+
+    @ui.page("/test-toggle-deactivate-fail")
+    async def page() -> None:
+        s = Sidebar(session, None, lambda *_: None)
+        sidebar_ref.append(s)
+        await s.render()
+
+    await user.open("/test-toggle-deactivate-fail")
+    with patch("stoiquent.ui.sidebar.ui.notify") as mock_notify:
+        sidebar_ref[0]._toggle_skill("greet", False)
+    catalog.deactivate.assert_called_once_with("greet")
+    mock_notify.assert_called_once_with(
+        "Failed to deactivate skill 'greet'", type="warning"
+    )
+
+
+async def test_new_session_saves_old_messages(
+    user: User, tmp_path: Path
+) -> None:
+    """Cover sidebar.py:95-98: save_background called before new session."""
+    store = make_store(tmp_path)
+    store.save_background = Mock()
+
+    session = Session(provider=FakeProvider())
+    session.messages = [Message(role="user", content="Unsaved work")]
+    original_id = session.id
+
+    received: list[tuple[str, list]] = []
+
+    def on_switch(new_id: str, new_messages: list[Message]) -> None:
+        received.append((new_id, new_messages))
+
+    sidebar_ref: list[Sidebar] = []
+
+    @ui.page("/test-new-saves")
+    async def page() -> None:
+        s = Sidebar(session, store, on_switch)
+        sidebar_ref.append(s)
+        await s.render()
+
+    await user.open("/test-new-saves")
+    await sidebar_ref[0]._new_session()
+
+    store.save_background.assert_called_once_with(
+        original_id, [Message(role="user", content="Unsaved work")]
+    )
+    assert len(received) == 1
+    assert received[0][0] != original_id  # new session ID generated
+    assert len(received[0][0]) == 8  # uuid hex[:8]
+    assert received[0][1] == []  # new session has empty messages
