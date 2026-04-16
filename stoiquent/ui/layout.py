@@ -48,7 +48,7 @@ async def render(
                 provider_names,
                 value=config.default_provider,
                 on_change=lambda e: on_provider_change(e.value),
-            ).classes("w-40").props("dense")
+            ).classes("w-40").props("dense").mark("provider-select")
         ui.label("Local LLM Agent").classes("text-caption opacity-60")
 
     with ui.splitter(value=20).classes("w-full h-screen") as splitter:

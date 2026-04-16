@@ -236,3 +236,23 @@ async def test_toggle_skill(user: User) -> None:
 
     sidebar_ref[0]._toggle_skill("greet", False)
     assert catalog.skills["greet"].active is False
+
+
+async def test_toggle_nonexistent_skill(user: User) -> None:
+    catalog = SkillCatalog({
+        "greet": _make_skill("greet", "Greeting", active=False),
+    })
+    session = Session(provider=FakeProvider(), catalog=catalog)
+
+    sidebar_ref: list[Sidebar] = []
+
+    @ui.page("/test-toggle-fail")
+    async def page() -> None:
+        s = Sidebar(session, None, lambda *_: None)
+        sidebar_ref.append(s)
+        await s.render()
+
+    await user.open("/test-toggle-fail")
+    # Toggling a nonexistent skill should not raise
+    sidebar_ref[0]._toggle_skill("nonexistent", True)
+    assert catalog.skills["greet"].active is False
