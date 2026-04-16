@@ -19,7 +19,10 @@ from stoiquent.ui import layout
 
 @dataclass
 class _FakeProvider:
-    """Inline provider for standalone script (avoids tests.conftest import)."""
+    """Inline provider for standalone script (avoids tests.conftest import).
+
+    Keep in sync with tests.conftest.FakeProvider.
+    """
 
     chunks: list[StreamChunk] = field(default_factory=list)
 
@@ -30,18 +33,21 @@ class _FakeProvider:
             yield chunk
 
 
-provider = _FakeProvider(
-    chunks=[
-        StreamChunk(content_delta="This is a test response from FakeProvider."),
-        StreamChunk(finish_reason="stop"),
-    ]
-)
-session = Session(provider=provider)
+def _make_session() -> Session:
+    """Fresh session per page request to avoid state leaking between runs."""
+    return Session(
+        provider=_FakeProvider(
+            chunks=[
+                StreamChunk(content_delta="This is a test response from FakeProvider."),
+                StreamChunk(finish_reason="stop"),
+            ]
+        )
+    )
 
 
 @ui.page("/")
 async def page() -> None:
-    await layout.render(session)
+    await layout.render(_make_session())
 
 
 if __name__ == "__main__":

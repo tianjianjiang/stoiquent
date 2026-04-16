@@ -4,7 +4,13 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from stoiquent.models import Message, PersistenceConfig, StreamChunk
+from stoiquent.models import (
+    AppConfig,
+    Message,
+    PersistenceConfig,
+    ProviderConfig,
+    StreamChunk,
+)
 from stoiquent.persistence import ConversationStore
 from stoiquent.skills.models import Skill, SkillMeta
 
@@ -33,6 +39,23 @@ def make_store(tmp_path: Path) -> ConversationStore:
     store = ConversationStore(config)
     store.ensure_dirs()
     return store
+
+
+def two_provider_config(
+    default: str = "local-qwen", second: str = "other"
+) -> AppConfig:
+    """Create an AppConfig with two providers for testing."""
+    return AppConfig(
+        default_provider=default,
+        providers={
+            "local-qwen": ProviderConfig(
+                base_url="http://localhost:11434/v1", model="qwen3:32b"
+            ),
+            second: ProviderConfig(
+                base_url="http://localhost:11434/v1", model="other-model"
+            ),
+        },
+    )
 
 
 def make_skill(name: str, description: str, active: bool = False) -> Skill:

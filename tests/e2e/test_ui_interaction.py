@@ -10,19 +10,17 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+from unittest.mock import Mock
+
 from nicegui import ui
 from nicegui.testing import User
 
 from stoiquent.agent.session import Session
-from stoiquent.models import (
-    AppConfig,
-    Message,
-    ProviderConfig,
-    StreamChunk,
-)
+
+from stoiquent.models import Message, StreamChunk
 from stoiquent.skills.catalog import SkillCatalog
 from stoiquent.ui import layout
-from tests.conftest import FakeProvider, make_skill, make_store
+from tests.conftest import FakeProvider, make_skill, make_store, two_provider_config
 
 
 # --- Send message ---
@@ -138,17 +136,7 @@ async def test_new_chat_resets_session(user: User, tmp_path: Path) -> None:
 
 async def test_provider_change_clears_messages(user: User) -> None:
     """Cover layout.py lines 34-40: on_provider_change closure."""
-    config = AppConfig(
-        default_provider="local-qwen",
-        providers={
-            "local-qwen": ProviderConfig(
-                base_url="http://localhost:11434/v1", model="qwen3:32b"
-            ),
-            "cloud-gpt": ProviderConfig(
-                base_url="https://api.openai.com/v1", model="gpt-4"
-            ),
-        },
-    )
+    config = two_provider_config(second="cloud-gpt")
     session = Session(provider=FakeProvider())
     session.messages = [Message(role="user", content="Before switch")]
 
@@ -165,18 +153,32 @@ async def test_provider_change_clears_messages(user: User) -> None:
     assert session.messages == []
 
 
-async def test_provider_dropdown_renders_with_config(user: User) -> None:
-    config = AppConfig(
-        default_provider="local-qwen",
-        providers={
-            "local-qwen": ProviderConfig(
-                base_url="http://localhost:11434/v1", model="qwen3:32b"
-            ),
-            "cloud-gpt": ProviderConfig(
-                base_url="https://api.openai.com/v1", model="gpt-4"
-            ),
-        },
+async def test_provider_change_saves_messages(user: User, tmp_path: Path) -> None:
+    """Cover layout.py:37: save_background called before clearing messages."""
+    config = two_provider_config(second="cloud-gpt")
+    store = make_store(tmp_path)
+    store.save_background = Mock()
+
+    session = Session(provider=FakeProvider())
+    session.messages = [Message(role="user", content="Save me")]
+    original_id = session.id
+
+    @ui.page("/")
+    async def page() -> None:
+        await layout.render(session, store, config=config)
+
+    await user.open("/")
+    select_element = next(iter(user.find(marker="provider-select").elements))
+    select_element.set_value("cloud-gpt")
+
+    store.save_background.assert_called_once_with(
+        original_id, [Message(role="user", content="Save me")]
     )
+    assert session.messages == []
+
+
+async def test_provider_dropdown_renders_with_config(user: User) -> None:
+    config = two_provider_config(second="cloud-gpt")
     session = Session(provider=FakeProvider())
 
     @ui.page("/")

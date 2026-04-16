@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import logging
+from pathlib import Path
+from unittest.mock import Mock
+
 import pytest
 from nicegui import ui
 from nicegui.testing import User
@@ -7,7 +11,7 @@ from nicegui.testing import User
 from stoiquent.agent.session import Session
 from stoiquent.models import Message, StreamChunk, ToolCall, ToolCallResult
 from stoiquent.ui.chat import ChatPanel
-from tests.conftest import FakeProvider
+from tests.conftest import FakeProvider, make_store
 
 
 @pytest.mark.asyncio
@@ -286,3 +290,34 @@ async def test_should_render_tool_card_during_stream(user: User) -> None:
     user.find("Send").click()
     await user.should_see("search")
     await user.should_see("Here are the results.")
+
+
+# --- Error-handling coverage ---
+
+
+async def test_should_log_background_save_failure(
+    user: User, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Cover chat.py:149-150: background save failure after sending."""
+    chunks = [
+        StreamChunk(content_delta="Response"),
+        StreamChunk(finish_reason="stop"),
+    ]
+    store = make_store(tmp_path)
+    store.save_background = Mock(side_effect=RuntimeError("Save failed"))
+
+    session = Session(provider=FakeProvider(chunks=chunks))
+    panel = ChatPanel(session, store)
+
+    @ui.page("/test-save-fail")
+    async def page() -> None:
+        panel.render()
+
+    await user.open("/test-save-fail")
+    with caplog.at_level(logging.WARNING):
+        user.find("Type a message...").type("Hi")
+        user.find("Send").click()
+        await user.should_see("Response")
+
+    store.save_background.assert_called_once()
+    assert "Failed to schedule background save" in caplog.text
