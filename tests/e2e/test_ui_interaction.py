@@ -17,32 +17,12 @@ from stoiquent.agent.session import Session
 from stoiquent.models import (
     AppConfig,
     Message,
-    PersistenceConfig,
     ProviderConfig,
     StreamChunk,
 )
-from stoiquent.persistence import ConversationStore
 from stoiquent.skills.catalog import SkillCatalog
-from stoiquent.skills.models import Skill, SkillMeta
 from stoiquent.ui import layout
-from tests.conftest import FakeProvider
-
-
-def _make_skill(name: str, description: str, active: bool = False) -> Skill:
-    return Skill(
-        meta=SkillMeta(name=name, description=description),
-        path=Path("/fake"),
-        instructions="",
-        active=active,
-        source="config",
-    )
-
-
-def _make_store(tmp_path: Path) -> ConversationStore:
-    config = PersistenceConfig(data_dir=str(tmp_path))
-    store = ConversationStore(config)
-    store.ensure_dirs()
-    return store
+from tests.conftest import FakeProvider, make_skill, make_store
 
 
 # --- Send message ---
@@ -94,8 +74,8 @@ async def test_sidebar_tabs_navigation(user: User) -> None:
 
 async def test_skills_tab_shows_toggles(user: User) -> None:
     catalog = SkillCatalog({
-        "greet": _make_skill("greet", "Greeting skill", active=True),
-        "search": _make_skill("search", "Search skill", active=False),
+        "greet": make_skill("greet", "Greeting skill", active=True),
+        "search": make_skill("search", "Search skill", active=False),
     })
     session = Session(provider=FakeProvider(), catalog=catalog)
 
@@ -114,8 +94,8 @@ async def test_skills_tab_shows_toggles(user: User) -> None:
 # --- Session list + load ---
 
 
-async def test_session_list_and_load(user: User, tmp_path: Path) -> None:
-    store = _make_store(tmp_path)
+async def test_session_list_renders(user: User, tmp_path: Path) -> None:
+    store = make_store(tmp_path)
     store.save_sync("s1", [Message(role="user", content="First chat")])
     store.save_sync("target", [
         Message(role="user", content="Loaded question"),
@@ -138,7 +118,7 @@ async def test_session_list_and_load(user: User, tmp_path: Path) -> None:
 
 async def test_new_chat_resets_session(user: User, tmp_path: Path) -> None:
     """Cover layout.py lines 29-31: on_session_switch closure via New Chat."""
-    store = _make_store(tmp_path)
+    store = make_store(tmp_path)
     session = Session(provider=FakeProvider())
     session.messages = [Message(role="user", content="Old message")]
 
@@ -148,8 +128,8 @@ async def test_new_chat_resets_session(user: User, tmp_path: Path) -> None:
 
     await user.open("/")
     user.find(marker="new-chat-btn").click()
-    # Yield to event loop so async _new_session handler completes
-    await asyncio.sleep(0.1)
+    # Yield to event loop so NiceGUI's in-process async handler completes
+    await asyncio.sleep(0)
     assert session.messages == []
 
 
@@ -177,10 +157,11 @@ async def test_provider_change_clears_messages(user: User) -> None:
         await layout.render(session, config=config)
 
     await user.open("/")
-    # Trigger provider change by setting value on the select element
+    # NiceGUI's User fixture has no high-level API for changing ui.select
+    # values, so we access the element directly via .elements and set_value().
     select_element = next(iter(user.find(marker="provider-select").elements))
     select_element.set_value("cloud-gpt")
-    await asyncio.sleep(0.1)
+    # set_value triggers on_provider_change synchronously via change handlers
     assert session.messages == []
 
 

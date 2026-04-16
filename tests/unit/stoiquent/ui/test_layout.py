@@ -15,6 +15,22 @@ from stoiquent.ui.layout import _switch_provider
 from tests.conftest import FakeProvider
 
 
+def _two_provider_config(
+    default: str = "local-qwen", second: str = "other"
+) -> AppConfig:
+    return AppConfig(
+        default_provider=default,
+        providers={
+            "local-qwen": ProviderConfig(
+                base_url="http://localhost:11434/v1", model="qwen3:32b"
+            ),
+            second: ProviderConfig(
+                base_url="http://localhost:11434/v1", model="other-model"
+            ),
+        },
+    )
+
+
 @pytest.mark.asyncio
 async def test_should_render_layout_with_header_and_sidebar(user: User) -> None:
     session = Session(provider=FakeProvider())
@@ -45,17 +61,7 @@ async def test_should_render_local_llm_label(user: User) -> None:
 @pytest.mark.asyncio
 async def test_should_render_provider_dropdown(user: User) -> None:
     session = Session(provider=FakeProvider())
-    config = AppConfig(
-        default_provider="local-qwen",
-        providers={
-            "local-qwen": ProviderConfig(
-                base_url="http://localhost:11434/v1", model="qwen3:32b"
-            ),
-            "cloud-gpt": ProviderConfig(
-                base_url="https://api.openai.com/v1", model="gpt-4"
-            ),
-        },
-    )
+    config = _two_provider_config(second="cloud-gpt")
 
     @ui.page("/test-dropdown")
     async def page() -> None:
@@ -89,17 +95,7 @@ async def test_session_switch_updates_messages(user: User) -> None:
 
 def test_switch_provider_changes_session_provider() -> None:
     session = Session(provider=FakeProvider())
-    config = AppConfig(
-        default_provider="local-qwen",
-        providers={
-            "local-qwen": ProviderConfig(
-                base_url="http://localhost:11434/v1", model="qwen3:32b"
-            ),
-            "other": ProviderConfig(
-                base_url="http://localhost:11434/v1", model="other-model"
-            ),
-        },
-    )
+    config = _two_provider_config()
 
     original = session.provider
     result = _switch_provider(session, config, "other")
@@ -114,20 +110,11 @@ async def test_switch_provider_with_closeable_provider() -> None:
     provider.close = close_mock  # type: ignore[attr-defined]
 
     session = Session(provider=provider)
-    config = AppConfig(
-        default_provider="local-qwen",
-        providers={
-            "local-qwen": ProviderConfig(
-                base_url="http://localhost:11434/v1", model="qwen3:32b"
-            ),
-            "other": ProviderConfig(
-                base_url="http://localhost:11434/v1", model="other-model"
-            ),
-        },
-    )
+    config = _two_provider_config()
 
     _switch_provider(session, config, "other")
-    await asyncio.sleep(0.01)
+    # Yield to event loop so the create_task(provider.close()) completes
+    await asyncio.sleep(0)
 
     assert session.provider is not provider
     close_mock.assert_awaited_once()
@@ -140,14 +127,7 @@ def test_switch_provider_returns_false_for_none_config() -> None:
 
 def test_switch_provider_returns_false_for_unknown_name() -> None:
     session = Session(provider=FakeProvider())
-    config = AppConfig(
-        default_provider="local-qwen",
-        providers={
-            "local-qwen": ProviderConfig(
-                base_url="http://localhost:11434/v1", model="qwen3:32b"
-            ),
-        },
-    )
+    config = _two_provider_config()
 
     original = session.provider
     result = _switch_provider(session, config, "nonexistent")
@@ -161,17 +141,7 @@ def test_switch_provider_logs_warning_when_no_event_loop(caplog: pytest.LogCaptu
     provider.close = AsyncMock()  # type: ignore[attr-defined]
 
     session = Session(provider=provider)
-    config = AppConfig(
-        default_provider="local-qwen",
-        providers={
-            "local-qwen": ProviderConfig(
-                base_url="http://localhost:11434/v1", model="qwen3:32b"
-            ),
-            "other": ProviderConfig(
-                base_url="http://localhost:11434/v1", model="other-model"
-            ),
-        },
-    )
+    config = _two_provider_config()
 
     with caplog.at_level(logging.WARNING):
         result = _switch_provider(session, config, "other")
@@ -186,20 +156,13 @@ async def test_switch_provider_logs_close_error(caplog: pytest.LogCaptureFixture
     provider.close = AsyncMock(side_effect=RuntimeError("close failed"))  # type: ignore[attr-defined]
 
     session = Session(provider=provider)
-    config = AppConfig(
-        default_provider="local-qwen",
-        providers={
-            "local-qwen": ProviderConfig(
-                base_url="http://localhost:11434/v1", model="qwen3:32b"
-            ),
-            "other": ProviderConfig(
-                base_url="http://localhost:11434/v1", model="other-model"
-            ),
-        },
-    )
+    config = _two_provider_config()
 
     with caplog.at_level(logging.WARNING):
         _switch_provider(session, config, "other")
-        await asyncio.sleep(0.01)
+        # Two yields needed: first runs the task (which raises), second fires
+        # the done-callback that logs the warning.
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
 
     assert "Failed to close old provider" in caplog.text

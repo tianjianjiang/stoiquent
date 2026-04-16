@@ -7,14 +7,30 @@ Then use Playwright MCP tools to interact at http://127.0.0.1:8080
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from dataclasses import dataclass, field
+
 from nicegui import ui
 
 from stoiquent.agent.session import Session
-from stoiquent.models import StreamChunk
+from stoiquent.models import Message, StreamChunk
 from stoiquent.ui import layout
-from tests.conftest import FakeProvider
 
-provider = FakeProvider(
+
+@dataclass
+class _FakeProvider:
+    """Inline provider for standalone script (avoids tests.conftest import)."""
+
+    chunks: list[StreamChunk] = field(default_factory=list)
+
+    async def stream(
+        self, messages: list[Message], tools: list[dict] | None = None
+    ) -> AsyncIterator[StreamChunk]:
+        for chunk in self.chunks:
+            yield chunk
+
+
+provider = _FakeProvider(
     chunks=[
         StreamChunk(content_delta="This is a test response from FakeProvider."),
         StreamChunk(finish_reason="stop"),
