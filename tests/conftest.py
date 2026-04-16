@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
+from pathlib import Path
 
-import pytest
-
-from stoiquent.agent.session import Session
-from stoiquent.models import Message, StreamChunk
+from stoiquent.models import Message, PersistenceConfig, StreamChunk
+from stoiquent.persistence import ConversationStore
+from stoiquent.skills.models import Skill, SkillMeta
 
 pytest_plugins = ["nicegui.testing.plugin"]
 
@@ -27,16 +27,20 @@ class FakeProvider:
             yield chunk
 
 
-@pytest.fixture
-def fake_provider() -> FakeProvider:
-    return FakeProvider(
-        chunks=[
-            StreamChunk(content_delta="Hello from fake!"),
-            StreamChunk(finish_reason="stop"),
-        ]
+def make_store(tmp_path: Path) -> ConversationStore:
+    """Create a ConversationStore backed by a temporary directory."""
+    config = PersistenceConfig(data_dir=str(tmp_path))
+    store = ConversationStore(config)
+    store.ensure_dirs()
+    return store
+
+
+def make_skill(name: str, description: str, active: bool = False) -> Skill:
+    """Create a Skill instance for testing."""
+    return Skill(
+        meta=SkillMeta(name=name, description=description),
+        path=Path("/fake"),
+        instructions="",
+        active=active,
+        source="config",
     )
-
-
-@pytest.fixture
-def fake_session(fake_provider: FakeProvider) -> Session:
-    return Session(provider=fake_provider)

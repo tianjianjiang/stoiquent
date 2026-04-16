@@ -7,29 +7,10 @@ from nicegui import ui
 from nicegui.testing import User
 
 from stoiquent.agent.session import Session
-from stoiquent.models import Message, PersistenceConfig
-from stoiquent.persistence import ConversationStore
+from stoiquent.models import Message
 from stoiquent.skills.catalog import SkillCatalog
-from stoiquent.skills.models import Skill, SkillMeta
 from stoiquent.ui.sidebar import Sidebar
-from tests.conftest import FakeProvider
-
-
-def _make_store(tmp_path: Path) -> ConversationStore:
-    config = PersistenceConfig(data_dir=str(tmp_path))
-    store = ConversationStore(config)
-    store.ensure_dirs()
-    return store
-
-
-def _make_skill(name: str, description: str, active: bool = False) -> Skill:
-    return Skill(
-        meta=SkillMeta(name=name, description=description),
-        path=Path("/fake"),
-        instructions="",
-        active=active,
-        source="config",
-    )
+from tests.conftest import FakeProvider, make_skill, make_store
 
 
 @pytest.mark.asyncio
@@ -37,7 +18,7 @@ async def test_should_render_session_and_skills_tabs(
     user: User, tmp_path: Path
 ) -> None:
     session = Session(provider=FakeProvider())
-    store = _make_store(tmp_path)
+    store = make_store(tmp_path)
 
     @ui.page("/test-tabs")
     async def page() -> None:
@@ -54,7 +35,7 @@ async def test_should_show_new_chat_button(
     user: User, tmp_path: Path
 ) -> None:
     session = Session(provider=FakeProvider())
-    store = _make_store(tmp_path)
+    store = make_store(tmp_path)
 
     @ui.page("/test-new")
     async def page() -> None:
@@ -69,7 +50,7 @@ async def test_should_show_new_chat_button(
 async def test_should_list_sessions_from_store(
     user: User, tmp_path: Path
 ) -> None:
-    store = _make_store(tmp_path)
+    store = make_store(tmp_path)
     store.save_sync("s1", [Message(role="user", content="First chat")])
     store.save_sync("s2", [Message(role="user", content="Second chat")])
 
@@ -88,8 +69,8 @@ async def test_should_list_sessions_from_store(
 @pytest.mark.asyncio
 async def test_should_show_skills_with_toggles(user: User) -> None:
     catalog = SkillCatalog({
-        "greet": _make_skill("greet", "Greeting skill", active=True),
-        "search": _make_skill("search", "Search skill", active=False),
+        "greet": make_skill("greet", "Greeting skill", active=True),
+        "search": make_skill("search", "Search skill", active=False),
     })
     session = Session(provider=FakeProvider(), catalog=catalog)
 
@@ -136,7 +117,7 @@ async def test_should_show_empty_catalog_message(user: User) -> None:
 async def test_new_session_calls_callback(
     user: User, tmp_path: Path
 ) -> None:
-    store = _make_store(tmp_path)
+    store = make_store(tmp_path)
     session = Session(provider=FakeProvider())
     session.messages = [Message(role="user", content="Old message")]
     received: list[tuple[str, list]] = []
@@ -163,7 +144,7 @@ async def test_new_session_calls_callback(
 async def test_load_session_calls_callback(
     user: User, tmp_path: Path
 ) -> None:
-    store = _make_store(tmp_path)
+    store = make_store(tmp_path)
     store.save_sync("target", [Message(role="user", content="Loaded")])
 
     session = Session(provider=FakeProvider())
@@ -192,7 +173,7 @@ async def test_load_session_calls_callback(
 async def test_load_nonexistent_session_does_not_switch(
     user: User, tmp_path: Path
 ) -> None:
-    store = _make_store(tmp_path)
+    store = make_store(tmp_path)
     session = Session(provider=FakeProvider())
     original_id = session.id
     received: list[tuple[str, list]] = []
@@ -218,7 +199,7 @@ async def test_load_nonexistent_session_does_not_switch(
 @pytest.mark.asyncio
 async def test_toggle_skill(user: User) -> None:
     catalog = SkillCatalog({
-        "greet": _make_skill("greet", "Greeting", active=False),
+        "greet": make_skill("greet", "Greeting", active=False),
     })
     session = Session(provider=FakeProvider(), catalog=catalog)
 
@@ -235,4 +216,24 @@ async def test_toggle_skill(user: User) -> None:
     assert catalog.skills["greet"].active is True
 
     sidebar_ref[0]._toggle_skill("greet", False)
+    assert catalog.skills["greet"].active is False
+
+
+async def test_toggle_nonexistent_skill(user: User) -> None:
+    catalog = SkillCatalog({
+        "greet": make_skill("greet", "Greeting", active=False),
+    })
+    session = Session(provider=FakeProvider(), catalog=catalog)
+
+    sidebar_ref: list[Sidebar] = []
+
+    @ui.page("/test-toggle-fail")
+    async def page() -> None:
+        s = Sidebar(session, None, lambda *_: None)
+        sidebar_ref.append(s)
+        await s.render()
+
+    await user.open("/test-toggle-fail")
+    # Toggling a nonexistent skill should not raise
+    sidebar_ref[0]._toggle_skill("nonexistent", True)
     assert catalog.skills["greet"].active is False

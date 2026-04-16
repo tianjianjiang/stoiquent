@@ -33,17 +33,17 @@ class Sidebar:
         self._sessions_container: ui.column | None = None
 
     async def render(self) -> None:
-        with ui.tabs().classes("w-full") as tabs:
-            sessions_tab = ui.tab("Sessions")
-            ui.tab("Skills")
+        with ui.tabs().classes("w-full").mark("sidebar-tabs") as tabs:
+            sessions_tab = ui.tab("Sessions").mark("sessions-tab")
+            ui.tab("Skills").mark("skills-tab")
 
         with ui.tab_panels(tabs, value=sessions_tab).classes("w-full flex-grow"):
             with ui.tab_panel(sessions_tab):
                 ui.button(
                     "New Chat", on_click=self._new_session
-                ).classes("w-full").props("flat dense")
+                ).classes("w-full").props("flat dense").mark("new-chat-btn")
                 ui.separator()
-                self._sessions_container = ui.column().classes("w-full gap-1")
+                self._sessions_container = ui.column().classes("w-full gap-1").mark("sessions-list")
                 await self._refresh_sessions()
 
             with ui.tab_panel("Skills"):
