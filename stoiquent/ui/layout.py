@@ -14,6 +14,7 @@ from stoiquent.ui.sidebar import Sidebar
 if TYPE_CHECKING:
     from stoiquent.models import AppConfig
     from stoiquent.persistence import ConversationStore
+    from stoiquent.projects import ProjectStore
 
 logger = logging.getLogger(__name__)
 
@@ -22,15 +23,16 @@ async def render(
     session: Session,
     store: ConversationStore | None = None,
     config: AppConfig | None = None,
+    project_store: ProjectStore | None = None,
 ) -> None:
     chat = ChatPanel(session, store)
 
     def on_session_switch(
         new_id: str, new_messages: list[Message], new_project_id: str | None
     ) -> None:
-        session.id = new_id
-        session.messages = new_messages
-        session.project_id = new_project_id
+        _apply_session_switch(
+            session, project_store, new_id, new_messages, new_project_id
+        )
         chat.reload_messages()
 
     def on_provider_change(provider_name: str) -> None:
@@ -61,6 +63,57 @@ async def render(
 
         with splitter.after:
             chat.render()
+
+
+def _load_project_instructions(
+    project_store: ProjectStore | None, project_id: str | None
+) -> str:
+    """Return the project's instructions, or '' when the store/id is absent
+    or the project cannot be loaded.
+
+    ``ProjectStore.load`` absorbs its documented expected-failure set
+    (missing file, I/O errors, corrupt JSON, schema errors) and returns
+    ``None``; those route through the ``record is None`` branch. Any other
+    exception is a contract violation and is logged at ERROR with traceback,
+    then swallowed so a session switch is never blocked by a faulty project
+    record.
+    """
+    if project_store is None or project_id is None:
+        return ""
+    try:
+        record = project_store.load(project_id)
+    except Exception:
+        logger.error(
+            "Unexpected failure loading project instructions for %s",
+            project_id,
+            exc_info=True,
+        )
+        return ""
+    if record is None:
+        return ""
+    return record.instructions
+
+
+def _apply_session_switch(
+    session: Session,
+    project_store: ProjectStore | None,
+    new_id: str,
+    new_messages: list[Message],
+    new_project_id: str | None,
+) -> None:
+    """Update all session fields tied to the active conversation together.
+
+    Keeps ``project_id`` and ``project_instructions`` consistent so a
+    chat cannot retain stale instructions after switching to a session
+    with no project or a different project. Instructions are resolved
+    before any field is mutated, so a future load-failure that surfaced
+    as a raise would leave the session untouched.
+    """
+    new_instructions = _load_project_instructions(project_store, new_project_id)
+    session.id = new_id
+    session.messages = new_messages
+    session.project_id = new_project_id
+    session.project_instructions = new_instructions
 
 
 def _switch_provider(

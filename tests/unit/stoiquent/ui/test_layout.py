@@ -8,10 +8,17 @@ import pytest
 from nicegui import ui
 from nicegui.testing import User
 
+from pathlib import Path
+
 from stoiquent.agent.session import Session
-from stoiquent.models import Message
+from stoiquent.models import Message, PersistenceConfig
+from stoiquent.projects import ProjectRecord, ProjectStore
 from stoiquent.ui import layout
-from stoiquent.ui.layout import _switch_provider
+from stoiquent.ui.layout import (
+    _apply_session_switch,
+    _load_project_instructions,
+    _switch_provider,
+)
 from tests.conftest import FakeProvider, two_provider_config
 
 
@@ -150,3 +157,112 @@ async def test_switch_provider_logs_close_error(caplog: pytest.LogCaptureFixture
         await asyncio.sleep(0)
 
     assert "Failed to close old provider" in caplog.text
+
+
+# --- _load_project_instructions ---
+
+
+def test_load_project_instructions_returns_empty_when_store_is_none() -> None:
+    assert _load_project_instructions(None, "proj1") == ""
+
+
+def test_load_project_instructions_returns_empty_when_project_id_is_none(
+    tmp_path: Path,
+) -> None:
+    store = ProjectStore(PersistenceConfig(data_dir=str(tmp_path)))
+    store.ensure_dirs()
+    assert _load_project_instructions(store, None) == ""
+
+
+def test_load_project_instructions_returns_empty_when_project_missing(
+    tmp_path: Path,
+) -> None:
+    store = ProjectStore(PersistenceConfig(data_dir=str(tmp_path)))
+    store.ensure_dirs()
+    assert _load_project_instructions(store, "nonexistent") == ""
+
+
+def test_load_project_instructions_returns_record_instructions(
+    tmp_path: Path,
+) -> None:
+    store = ProjectStore(PersistenceConfig(data_dir=str(tmp_path)))
+    store.ensure_dirs()
+    store.save_sync(
+        ProjectRecord(
+            id="proj1",
+            name="My Project",
+            folder=str(tmp_path),
+            instructions="Use formal tone.",
+        )
+    )
+    assert _load_project_instructions(store, "proj1") == "Use formal tone."
+
+
+def test_load_project_instructions_swallows_load_exception(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Any unexpected store exception must not block a session switch."""
+    store = ProjectStore(PersistenceConfig(data_dir=str(tmp_path)))
+    store.ensure_dirs()
+
+    def _raise(_project_id: str) -> None:
+        raise RuntimeError("simulated store failure")
+
+    monkeypatch.setattr(store, "load", _raise)
+
+    with caplog.at_level(logging.ERROR, logger="stoiquent.ui.layout"):
+        result = _load_project_instructions(store, "proj1")
+
+    assert result == ""
+    assert any(
+        "Unexpected failure loading project instructions for proj1" in r.message
+        for r in caplog.records
+    )
+
+
+# --- _apply_session_switch ---
+
+
+def test_apply_session_switch_clears_stale_project_instructions(
+    tmp_path: Path,
+) -> None:
+    """Switching to a session with project_id=None must clear stale instructions."""
+    session = Session(provider=FakeProvider())
+    session.project_id = "projA"
+    session.project_instructions = "A-only guidance"
+
+    _apply_session_switch(
+        session, None, "new_id", [Message(role="user", content="fresh")], None
+    )
+
+    assert session.project_id is None
+    assert session.project_instructions == ""
+    assert session.id == "new_id"
+    assert len(session.messages) == 1
+
+
+def test_apply_session_switch_loads_new_project_instructions(
+    tmp_path: Path,
+) -> None:
+    """Switching into a different project must replace instructions, not append."""
+    store = ProjectStore(PersistenceConfig(data_dir=str(tmp_path)))
+    store.ensure_dirs()
+    store.save_sync(
+        ProjectRecord(
+            id="projB",
+            name="Project B",
+            folder=str(tmp_path),
+            instructions="B-only guidance",
+        )
+    )
+
+    session = Session(provider=FakeProvider())
+    session.project_id = "projA"
+    session.project_instructions = "A-only guidance"
+
+    _apply_session_switch(session, store, "sid", [], "projB")
+
+    assert session.project_id == "projB"
+    assert session.project_instructions == "B-only guidance"
