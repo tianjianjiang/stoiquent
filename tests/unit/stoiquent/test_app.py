@@ -88,3 +88,31 @@ def test_should_register_shutdown_hook() -> None:
         start(config)
 
         assert mock_app.on_shutdown.call_count >= 1
+
+
+def test_should_raise_systemexit_when_project_store_ensure_dirs_fails() -> None:
+    config = AppConfig(
+        providers={"p": ProviderConfig(base_url="http://x", model="m")},
+        default_provider="p",
+    )
+    with patch("stoiquent.app.ui") as mock_ui, \
+         patch("stoiquent.app.app"), \
+         patch("stoiquent.app.ConversationStore") as mock_conv_store_cls, \
+         patch("stoiquent.app.ProjectStore") as mock_project_store_cls:
+        mock_ui.run = MagicMock()
+        mock_ui.page = MagicMock(return_value=lambda f: f)
+        # ConversationStore.ensure_dirs must succeed so the failure is pinned
+        # to ProjectStore.ensure_dirs specifically.
+        mock_conv_store_cls.return_value.ensure_dirs.return_value = None
+        mock_project_store_cls.return_value.ensure_dirs.side_effect = OSError(
+            "simulated project-store mkdir failure"
+        )
+
+        from stoiquent.app import start
+
+        with pytest.raises(SystemExit, match="simulated project-store mkdir failure"):
+            start(config)
+
+        # Pins ordering: ConversationStore succeeds first; ProjectStore raises second.
+        mock_conv_store_cls.return_value.ensure_dirs.assert_called_once()
+        mock_project_store_cls.return_value.ensure_dirs.assert_called_once()

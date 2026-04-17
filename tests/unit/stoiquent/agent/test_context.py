@@ -49,6 +49,32 @@ def test_should_place_system_prompt_first() -> None:
     assert len(messages[0].content) > 0
 
 
+def test_build_messages_includes_project_instructions() -> None:
+    session = _make_session()
+    session.project_instructions = "Use formal tone. Prefer concise answers."
+
+    messages, _tools = build_messages(session)
+
+    assert messages[0].role == "system"
+    assert messages[0].content is not None
+    assert BASE_SYSTEM_PROMPT in messages[0].content
+    assert "Use formal tone. Prefer concise answers." in messages[0].content
+    # Project instructions appear after the base prompt.
+    base_idx = messages[0].content.index(BASE_SYSTEM_PROMPT)
+    project_idx = messages[0].content.index("Use formal tone.")
+    assert base_idx < project_idx
+
+
+def test_build_messages_omits_empty_project_instructions() -> None:
+    session = _make_session()
+    session.project_instructions = ""
+
+    messages, _tools = build_messages(session)
+
+    # No catalog and empty instructions → content is exactly the base prompt.
+    assert messages[0].content == BASE_SYSTEM_PROMPT
+
+
 def test_should_inject_catalog_into_system_prompt() -> None:
     catalog = SkillCatalog({
         "hello": Skill(

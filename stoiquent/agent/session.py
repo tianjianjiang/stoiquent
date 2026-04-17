@@ -26,6 +26,7 @@ class Session:
     iteration_limit: int = 25
     tool_timeout: float = 300.0
     project_id: str | None = None
+    project_instructions: str = ""
 
     def __post_init__(self) -> None:
         if self.iteration_limit <= 0:

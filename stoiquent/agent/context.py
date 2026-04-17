@@ -20,6 +20,9 @@ def build_messages(
     """
     system_parts = [BASE_SYSTEM_PROMPT]
 
+    if session.project_instructions:
+        system_parts.append(session.project_instructions)
+
     if session.catalog:
         catalog_prompt = session.catalog.get_catalog_prompt()
         if catalog_prompt:
