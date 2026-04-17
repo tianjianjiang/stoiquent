@@ -4,22 +4,19 @@ import asyncio
 import json
 import logging
 import os
-import re
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from stoiquent.models import PersistenceConfig
+from stoiquent.models import SAFE_ID, PersistenceConfig
 
 logger = logging.getLogger(__name__)
 
-_SAFE_ID = re.compile(r"^[a-zA-Z0-9_-]+$")
-
 
 def _validate_safe_id(v: str) -> str:
-    if not _SAFE_ID.match(v):
+    if not SAFE_ID.match(v):
         raise ValueError(f"Invalid project id: {v!r}")
     return v
 
@@ -71,7 +68,7 @@ class ProjectStore:
         self._projects_dir.mkdir(parents=True, exist_ok=True)
 
     def _path_for(self, project_id: str) -> Path:
-        if not _SAFE_ID.match(project_id):
+        if not SAFE_ID.match(project_id):
             raise ValueError(f"Invalid project_id: {project_id!r}")
         return self._projects_dir / f"{project_id}.json"
 

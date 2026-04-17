@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-OnSessionSwitch = Callable[[str, list[Message]], None]
+OnSessionSwitch = Callable[[str, list[Message], str | None], None]
 
 
 class Sidebar:
@@ -77,7 +77,9 @@ class Sidebar:
             return
         if self._session.messages:
             self._store.save_background(
-                self._session.id, self._session.messages
+                self._session.id,
+                self._session.messages,
+                self._session.project_id,
             )
         try:
             record = await self._store.load_async(session_id)
@@ -88,16 +90,18 @@ class Sidebar:
         if record is None:
             ui.notify("Could not load conversation", type="warning")
             return
-        self._on_session_switch(record.id, record.messages)
+        self._on_session_switch(record.id, record.messages, record.project_id)
         await self._refresh_sessions()
 
     async def _new_session(self) -> None:
         if self._session.messages and self._store is not None:
             self._store.save_background(
-                self._session.id, self._session.messages
+                self._session.id,
+                self._session.messages,
+                self._session.project_id,
             )
         new_id = uuid.uuid4().hex[:8]
-        self._on_session_switch(new_id, [])
+        self._on_session_switch(new_id, [], None)
         await self._refresh_sessions()
 
     def _render_skills_tab(self) -> None:

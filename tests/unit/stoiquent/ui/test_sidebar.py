@@ -124,7 +124,7 @@ async def test_new_session_calls_callback(
     session.messages = [Message(role="user", content="Old message")]
     received: list[tuple[str, list]] = []
 
-    def on_switch(new_id: str, new_messages: list[Message]) -> None:
+    def on_switch(new_id: str, new_messages: list[Message], new_project_id: str | None) -> None:
         received.append((new_id, new_messages))
 
     sidebar_ref: list[Sidebar] = []
@@ -152,7 +152,7 @@ async def test_load_session_calls_callback(
     session = Session(provider=FakeProvider())
     received: list[tuple[str, list]] = []
 
-    def on_switch(new_id: str, new_messages: list[Message]) -> None:
+    def on_switch(new_id: str, new_messages: list[Message], new_project_id: str | None) -> None:
         received.append((new_id, new_messages))
 
     sidebar_ref: list[Sidebar] = []
@@ -180,7 +180,7 @@ async def test_load_nonexistent_session_does_not_switch(
     original_id = session.id
     received: list[tuple[str, list]] = []
 
-    def on_switch(new_id: str, new_messages: list[Message]) -> None:
+    def on_switch(new_id: str, new_messages: list[Message], new_project_id: str | None) -> None:
         received.append((new_id, new_messages))
 
     sidebar_ref: list[Sidebar] = []
@@ -276,7 +276,7 @@ async def test_load_session_handles_exception(
     session = Session(provider=FakeProvider())
     received: list[tuple[str, list]] = []
 
-    def on_switch(new_id: str, new_messages: list[Message]) -> None:
+    def on_switch(new_id: str, new_messages: list[Message], new_project_id: str | None) -> None:
         received.append((new_id, new_messages))
 
     sidebar_ref: list[Sidebar] = []
@@ -334,7 +334,7 @@ async def test_load_session_saves_old_messages(
 
     received: list[tuple[str, list]] = []
 
-    def on_switch(new_id: str, new_messages: list[Message]) -> None:
+    def on_switch(new_id: str, new_messages: list[Message], new_project_id: str | None) -> None:
         received.append((new_id, new_messages))
 
     sidebar_ref: list[Sidebar] = []
@@ -349,7 +349,7 @@ async def test_load_session_saves_old_messages(
     await sidebar_ref[0]._load_session("target")
 
     store.save_background.assert_called_once_with(
-        original_id, [Message(role="user", content="Old message")]
+        original_id, [Message(role="user", content="Old message")], None
     )
     assert len(received) == 1
     assert received[0][0] == "target"
@@ -418,7 +418,7 @@ async def test_new_session_saves_old_messages(
 
     received: list[tuple[str, list]] = []
 
-    def on_switch(new_id: str, new_messages: list[Message]) -> None:
+    def on_switch(new_id: str, new_messages: list[Message], new_project_id: str | None) -> None:
         received.append((new_id, new_messages))
 
     sidebar_ref: list[Sidebar] = []
@@ -433,7 +433,7 @@ async def test_new_session_saves_old_messages(
     await sidebar_ref[0]._new_session()
 
     store.save_background.assert_called_once_with(
-        original_id, [Message(role="user", content="Unsaved work")]
+        original_id, [Message(role="user", content="Unsaved work")], None
     )
     assert len(received) == 1
     assert received[0][0] != original_id  # new session ID generated

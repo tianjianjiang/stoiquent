@@ -172,7 +172,7 @@ async def test_provider_change_saves_messages(user: User, tmp_path: Path) -> Non
     select_element.set_value("cloud-gpt")
 
     store.save_background.assert_called_once_with(
-        original_id, [Message(role="user", content="Save me")]
+        original_id, [Message(role="user", content="Save me")], None
     )
     assert session.messages == []
 
