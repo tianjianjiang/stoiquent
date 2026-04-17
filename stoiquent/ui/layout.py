@@ -25,16 +25,19 @@ async def render(
 ) -> None:
     chat = ChatPanel(session, store)
 
-    def on_session_switch(new_id: str, new_messages: list[Message]) -> None:
+    def on_session_switch(
+        new_id: str, new_messages: list[Message], new_project_id: str | None
+    ) -> None:
         session.id = new_id
         session.messages = new_messages
+        session.project_id = new_project_id
         chat.reload_messages()
 
     def on_provider_change(provider_name: str) -> None:
         if not _switch_provider(session, config, provider_name):
             return
         if session.messages and store is not None:
-            store.save_background(session.id, session.messages)
+            store.save_background(session.id, session.messages, session.project_id)
         session.messages = []
         chat.reload_messages()
         ui.notify("Provider switched. Starting fresh conversation.")

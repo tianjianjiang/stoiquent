@@ -144,7 +144,9 @@ class ChatPanel:
         if self._store is not None:
             try:
                 self._store.save_background(
-                    self.session.id, self.session.messages
+                    self.session.id,
+                    self.session.messages,
+                    self.session.project_id,
                 )
             except Exception:
                 logger.warning("Failed to schedule background save", exc_info=True)

@@ -4,18 +4,23 @@ import asyncio
 import json
 import logging
 import os
-import re
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from stoiquent.models import Message, PersistenceConfig
+from stoiquent.models import SAFE_ID, Message, PersistenceConfig
 
 logger = logging.getLogger(__name__)
 
-_SAFE_ID = re.compile(r"^[a-zA-Z0-9_-]+$")
+
+def _validate_optional_safe_id(v: str | None) -> str | None:
+    if v is None:
+        return v
+    if not SAFE_ID.match(v):
+        raise ValueError(f"Invalid project_id: {v!r}")
+    return v
 
 
 class ConversationRecord(BaseModel):
@@ -32,6 +37,9 @@ class ConversationRecord(BaseModel):
         default_factory=lambda: datetime.now(timezone.utc).isoformat()
     )
     messages: list[Message] = Field(default_factory=list)
+    project_id: str | None = None
+
+    validate_project_id = field_validator("project_id")(_validate_optional_safe_id)
 
 
 class ConversationSummary(BaseModel):
@@ -44,6 +52,9 @@ class ConversationSummary(BaseModel):
     created_at: str
     updated_at: str
     message_count: int = Field(ge=0)
+    project_id: str | None = None
+
+    validate_project_id = field_validator("project_id")(_validate_optional_safe_id)
 
 
 class ConversationStore:
@@ -59,17 +70,23 @@ class ConversationStore:
         self._conv_dir.mkdir(parents=True, exist_ok=True)
 
     def _path_for(self, session_id: str) -> Path:
-        if not _SAFE_ID.match(session_id):
+        if not SAFE_ID.match(session_id):
             raise ValueError(f"Invalid session_id: {session_id!r}")
         return self._conv_dir / f"{session_id}.json"
 
-    def save_sync(self, session_id: str, messages: list[Message]) -> None:
+    def save_sync(
+        self,
+        session_id: str,
+        messages: list[Message],
+        project_id: str | None = None,
+    ) -> None:
         """Save conversation atomically via tempfile + os.replace."""
         record = ConversationRecord(
             id=session_id,
             title=_derive_title(messages),
             messages=messages,
             updated_at=datetime.now(timezone.utc).isoformat(),
+            project_id=project_id,
         )
 
         path = self._path_for(session_id)
@@ -102,17 +119,27 @@ class ConversationStore:
                 os.unlink(tmp_path)
             raise
 
-    async def save(self, session_id: str, messages: list[Message]) -> None:
+    async def save(
+        self,
+        session_id: str,
+        messages: list[Message],
+        project_id: str | None = None,
+    ) -> None:
         """Async save via thread pool."""
-        await asyncio.to_thread(self.save_sync, session_id, messages)
+        await asyncio.to_thread(self.save_sync, session_id, messages, project_id)
 
-    def save_background(self, session_id: str, messages: list[Message]) -> None:
+    def save_background(
+        self,
+        session_id: str,
+        messages: list[Message],
+        project_id: str | None = None,
+    ) -> None:
         """Fire-and-forget save. Logs errors instead of raising."""
         snapshot = list(messages)
 
         async def _do_save() -> None:
             try:
-                await self.save(session_id, snapshot)
+                await self.save(session_id, snapshot, project_id)
             except Exception:
                 logger.exception(
                     "Failed to save conversation %s", session_id
@@ -125,7 +152,7 @@ class ConversationStore:
             task.add_done_callback(self._pending_tasks.discard)
         except RuntimeError:
             try:
-                self.save_sync(session_id, snapshot)
+                self.save_sync(session_id, snapshot, project_id)
             except Exception:
                 logger.exception(
                     "Failed to save conversation %s (sync fallback)", session_id
@@ -145,8 +172,15 @@ class ConversationStore:
             )
             return None
 
-    def list_conversations(self) -> list[ConversationSummary]:
-        """List all saved conversations, sorted by updated_at descending."""
+    def list_conversations(
+        self, project_id: str | None = None
+    ) -> list[ConversationSummary]:
+        """List saved conversations, sorted by updated_at descending.
+
+        When ``project_id`` is provided, return only conversations with a
+        matching ``project_id``. ``None`` returns all conversations regardless
+        of their project assignment.
+        """
         summaries: list[ConversationSummary] = []
         if not self._conv_dir.exists():
             return summaries
@@ -154,6 +188,9 @@ class ConversationStore:
         for path in self._conv_dir.glob("*.json"):
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
+                record_project_id = data.get("project_id")
+                if project_id is not None and record_project_id != project_id:
+                    continue
                 summaries.append(
                     ConversationSummary(
                         id=data["id"],
@@ -161,9 +198,10 @@ class ConversationStore:
                         created_at=data.get("created_at", ""),
                         updated_at=data.get("updated_at", ""),
                         message_count=len(data.get("messages", [])),
+                        project_id=record_project_id,
                     )
                 )
-            except (json.JSONDecodeError, OSError, KeyError):
+            except (json.JSONDecodeError, OSError, KeyError, ValueError):
                 logger.warning(
                     "Skipping unreadable conversation file: %s",
                     path.name,
@@ -177,9 +215,11 @@ class ConversationStore:
         """Async variant of load via thread pool."""
         return await asyncio.to_thread(self.load, session_id)
 
-    async def list_conversations_async(self) -> list[ConversationSummary]:
+    async def list_conversations_async(
+        self, project_id: str | None = None
+    ) -> list[ConversationSummary]:
         """Async variant of list_conversations via thread pool."""
-        return await asyncio.to_thread(self.list_conversations)
+        return await asyncio.to_thread(self.list_conversations, project_id)
 
     def delete(self, session_id: str) -> bool:
         """Delete a conversation file. Returns True if deleted."""

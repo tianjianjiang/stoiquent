@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import re
 from typing import Any, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+SAFE_ID = re.compile(r"^[a-zA-Z0-9_-]+$")
 
 
 class ToolCall(BaseModel):

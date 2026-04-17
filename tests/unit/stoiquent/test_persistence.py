@@ -149,6 +149,138 @@ def test_list_conversations_skips_corrupt_files(tmp_path: Path) -> None:
     assert summaries[0].id == "good"
 
 
+# --- ConversationStore: project_id ---
+
+
+def test_save_with_project_id_roundtrips(tmp_path: Path) -> None:
+    store = _make_store(tmp_path)
+    store.save_sync("conv1", _sample_messages(), project_id="proj_alpha")
+
+    record = store.load("conv1")
+    assert record is not None
+    assert record.project_id == "proj_alpha"
+
+
+def test_load_legacy_conversation_without_project_id(tmp_path: Path) -> None:
+    """Backward compatibility: records missing the project_id field load cleanly."""
+    store = _make_store(tmp_path)
+    legacy_path = tmp_path / "conversations" / "legacy.json"
+    legacy_path.write_text(
+        json.dumps(
+            {
+                "id": "legacy",
+                "title": "Old",
+                "created_at": "2026-04-01T00:00:00+00:00",
+                "updated_at": "2026-04-01T00:00:00+00:00",
+                "messages": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    record = store.load("legacy")
+    assert record is not None
+    assert record.id == "legacy"
+    assert record.project_id is None
+
+
+def test_list_conversations_filtered_by_project(tmp_path: Path) -> None:
+    store = _make_store(tmp_path)
+    store.save_sync("a", _sample_messages(), project_id="p1")
+    store.save_sync("b", _sample_messages(), project_id="p2")
+    store.save_sync("c", _sample_messages(), project_id="p1")
+    store.save_sync("d", _sample_messages())  # no project
+
+    summaries = store.list_conversations(project_id="p1")
+    ids = sorted(s.id for s in summaries)
+    assert ids == ["a", "c"]
+    assert all(s.project_id == "p1" for s in summaries)
+
+
+def test_list_conversations_unfiltered_returns_all(tmp_path: Path) -> None:
+    store = _make_store(tmp_path)
+    store.save_sync("a", _sample_messages(), project_id="p1")
+    store.save_sync("b", _sample_messages())
+
+    summaries = store.list_conversations()
+    ids = sorted(s.id for s in summaries)
+    assert ids == ["a", "b"]
+
+
+async def test_save_background_preserves_project_id(tmp_path: Path) -> None:
+    store = _make_store(tmp_path)
+    store.save_background("bg1", _sample_messages(), project_id="p1")
+    await asyncio.gather(*store._pending_tasks)
+
+    record = store.load("bg1")
+    assert record is not None
+    assert record.project_id == "p1"
+
+
+async def test_save_background_preserves_none_project_id(tmp_path: Path) -> None:
+    """Non-None session.project_id must round-trip; None remains None."""
+    store = _make_store(tmp_path)
+    store.save_background("bg_none", _sample_messages())
+    await asyncio.gather(*store._pending_tasks)
+
+    record = store.load("bg_none")
+    assert record is not None
+    assert record.project_id is None
+
+
+async def test_list_conversations_async_filters_by_project(tmp_path: Path) -> None:
+    store = _make_store(tmp_path)
+    store.save_sync("a", _sample_messages(), project_id="p1")
+    store.save_sync("b", _sample_messages(), project_id="p2")
+
+    summaries = await store.list_conversations_async(project_id="p1")
+    assert [s.id for s in summaries] == ["a"]
+
+
+def test_list_conversations_empty_string_project_id_matches_nothing(tmp_path: Path) -> None:
+    """Empty string is not a synonym for None. The validator rejects "" on save,
+    so no persisted record can carry project_id=="" — filtering by "" returns [].
+    Callers must pass None to disable filtering.
+    """
+    store = _make_store(tmp_path)
+    store.save_sync("a", _sample_messages(), project_id="p1")
+    store.save_sync("b", _sample_messages())
+
+    summaries = store.list_conversations(project_id="")
+    assert summaries == []
+
+
+def test_save_with_invalid_project_id_rejected(tmp_path: Path) -> None:
+    """SAFE_ID regex rejects path-traversal / shell-hazard project_ids."""
+    store = _make_store(tmp_path)
+    with pytest.raises(ValueError, match="Invalid project_id"):
+        store.save_sync("c1", _sample_messages(), project_id="../etc/passwd")
+
+
+def test_list_conversations_skips_file_with_invalid_project_id(tmp_path: Path) -> None:
+    """A hand-edited file with malformed project_id must not crash the listing."""
+    store = _make_store(tmp_path)
+    store.save_sync("good", _sample_messages(), project_id="p1")
+
+    tampered_path = tmp_path / "conversations" / "bad.json"
+    tampered_path.write_text(
+        json.dumps(
+            {
+                "id": "bad",
+                "title": "tampered",
+                "created_at": "2026-04-17T00:00:00+00:00",
+                "updated_at": "2026-04-17T00:00:00+00:00",
+                "messages": [],
+                "project_id": "../etc",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    summaries = store.list_conversations()
+    assert [s.id for s in summaries] == ["good"]
+
+
 # --- ConversationStore: delete ---
 
 
