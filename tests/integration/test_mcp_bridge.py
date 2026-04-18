@@ -19,8 +19,6 @@ from stoiquent.skills.models import MCPServerDef, Skill, SkillMeta, SkillToolDef
 from tests.conftest import FakeToolCallingProvider, async_noop, tool_call_script
 from tests.integration.conftest import skip_no_model, skip_no_ollama
 
-ECHO_SERVER_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "mcp_servers"
-
 ECHO_SERVER = str(
     Path(__file__).resolve().parents[1] / "fixtures" / "mcp_servers" / "echo_server.py"
 )

@@ -33,7 +33,7 @@ class FakeProvider:
     async def stream(
         self,
         messages: list[Message],
-        tools: list[dict] | None = None,
+        tools: list[dict[str, Any]] | None = None,
     ) -> AsyncIterator[StreamChunk]:
         for chunk in self.chunks:
             yield chunk
@@ -66,7 +66,7 @@ class FakeToolCallingProvider:
     async def stream(
         self,
         messages: list[Message],
-        tools: list[dict] | None = None,
+        tools: list[dict[str, Any]] | None = None,
     ) -> AsyncIterator[StreamChunk]:
         if self.call_count >= len(self.scripts):
             last_role = messages[-1].role if messages else None
