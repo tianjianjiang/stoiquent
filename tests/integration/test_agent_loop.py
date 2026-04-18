@@ -13,6 +13,7 @@ from tests.integration.conftest import skip_no_model, skip_no_ollama
 @skip_no_ollama
 @skip_no_model
 @pytest.mark.integration
+@pytest.mark.ollama
 @pytest.mark.asyncio
 async def test_should_complete_full_round_trip(
     provider: OpenAICompatProvider,
@@ -38,6 +39,7 @@ async def test_should_complete_full_round_trip(
 @skip_no_ollama
 @skip_no_model
 @pytest.mark.integration
+@pytest.mark.ollama
 @pytest.mark.asyncio
 async def test_should_extract_reasoning_from_deepseek_r1(
     provider: OpenAICompatProvider,
@@ -60,6 +62,7 @@ async def test_should_extract_reasoning_from_deepseek_r1(
 @skip_no_ollama
 @skip_no_model
 @pytest.mark.integration
+@pytest.mark.ollama
 @pytest.mark.asyncio
 async def test_should_stream_content_and_reasoning_separately(
     provider: OpenAICompatProvider,
@@ -87,6 +90,7 @@ async def test_should_stream_content_and_reasoning_separately(
 @skip_no_ollama
 @skip_no_model
 @pytest.mark.integration
+@pytest.mark.ollama
 @pytest.mark.asyncio
 async def test_should_accumulate_multi_turn_history(
     provider: OpenAICompatProvider,

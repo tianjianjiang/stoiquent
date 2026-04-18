@@ -16,6 +16,7 @@ from stoiquent.skills.catalog import SkillCatalog
 from stoiquent.skills.mcp_bridge import MCPBridge
 from stoiquent.skills.models import MCPServerDef, Skill, SkillMeta, SkillToolDef
 
+from tests.conftest import FakeToolCallingProvider, async_noop, tool_call_script
 from tests.integration.conftest import skip_no_model, skip_no_ollama
 
 ECHO_SERVER_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "mcp_servers"
@@ -49,9 +50,81 @@ async def test_should_start_discover_call_and_stop_mcp_server() -> None:
         await bridge.stop_all()
 
 
+def _echo_skill() -> Skill:
+    """Shared Skill fixture describing the MCP echo server's single ``echo``
+    tool; used by both the Ollama-backed and deterministic MCP-routing tests."""
+    return Skill(
+        meta=SkillMeta(
+            name="echo-skill",
+            description="Skill backed by MCP echo server",
+            tools=[
+                SkillToolDef(
+                    name="echo",
+                    description="Echo back a message. Takes a 'message' string parameter.",
+                    parameters={
+                        "type": "object",
+                        "properties": {
+                            "message": {"type": "string", "description": "Message to echo"},
+                        },
+                        "required": ["message"],
+                    },
+                ),
+            ],
+        ),
+        path=Path("/fake"),
+        instructions="Use the echo tool when asked to echo something.",
+        active=True,
+    )
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_should_route_mcp_tool_call_deterministic() -> None:
+    """Deterministic counterpart of the Ollama-backed test below — still
+    exercises the MCP subprocess, stdio transport, and bridge routing;
+    only the LLM source is swapped for a scripted provider."""
+    bridge = MCPBridge()
+    server_def = MCPServerDef(command=sys.executable, args=[ECHO_SERVER])
+    provider = FakeToolCallingProvider(
+        scripts=tool_call_script(
+            tool_name="echo",
+            arguments={"message": "hello from deterministic test"},
+            final_reply="Done.",
+            call_id="call_echo_1",
+        )
+    )
+
+    try:
+        await bridge.start_server(server_def)
+        session = Session(
+            provider=provider,
+            catalog=SkillCatalog({"echo-skill": _echo_skill()}),
+            sandbox=NoopBackend(),
+            mcp_bridge=bridge,
+            sandbox_policy=default_policy(),
+            iteration_limit=5,
+            tool_timeout=30.0,
+        )
+
+        await run_agent_loop(
+            session,
+            "Echo 'hello from deterministic test'.",
+            async_noop,
+        )
+
+        assert provider.call_count == 2
+        tool_msgs = [m for m in session.messages if m.role == "tool"]
+        assert len(tool_msgs) == 1
+        assert "Echo: hello from deterministic test" in (tool_msgs[0].content or "")
+        assert session.messages[-1].content == "Done."
+    finally:
+        await bridge.stop_all()
+
+
 @skip_no_ollama
 @skip_no_model
 @pytest.mark.integration
+@pytest.mark.ollama
 @pytest.mark.asyncio
 async def test_should_route_mcp_tool_call_from_llm(
     provider: OpenAICompatProvider,
@@ -62,36 +135,10 @@ async def test_should_route_mcp_tool_call_from_llm(
 
     try:
         await bridge.start_server(server_def)
-
-        skill = Skill(
-            meta=SkillMeta(
-                name="echo-skill",
-                description="Skill backed by MCP echo server",
-                tools=[
-                    SkillToolDef(
-                        name="echo",
-                        description="Echo back a message. Takes a 'message' string parameter.",
-                        parameters={
-                            "type": "object",
-                            "properties": {
-                                "message": {"type": "string", "description": "Message to echo"},
-                            },
-                            "required": ["message"],
-                        },
-                    ),
-                ],
-            ),
-            path=Path("/fake"),
-            instructions="Use the echo tool when asked to echo something.",
-            active=True,
-        )
-        catalog = SkillCatalog({"echo-skill": skill})
-        sandbox = NoopBackend()
-
         session = Session(
             provider=provider,
-            catalog=catalog,
-            sandbox=sandbox,
+            catalog=SkillCatalog({"echo-skill": _echo_skill()}),
+            sandbox=NoopBackend(),
             mcp_bridge=bridge,
             sandbox_policy=default_policy(),
             iteration_limit=5,

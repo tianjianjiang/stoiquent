@@ -27,7 +27,10 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests/unit", "tests/integration", "tests/e2e"]
-markers = ["integration: requires Ollama running locally"]
+markers = [
+    "integration: requires external dependencies (Ollama, container runtimes, etc.)",
+    "ollama: uses a real Ollama server; non-deterministic. Exclude with `pytest -m \"not ollama\"` for stable runs",
+]
 asyncio_mode = "auto"
 asyncio_default_test_loop_scope = "session"
 asyncio_default_fixture_loop_scope = "session"
