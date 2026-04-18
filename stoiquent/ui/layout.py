@@ -58,7 +58,7 @@ async def render(
 
     with ui.splitter(value=20).classes("w-full h-screen") as splitter:
         with splitter.before:
-            sidebar = Sidebar(session, store, on_session_switch)
+            sidebar = Sidebar(session, store, on_session_switch, project_store)
             await sidebar.render()
 
         with splitter.after:
