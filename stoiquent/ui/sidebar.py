@@ -157,9 +157,9 @@ class Sidebar:
 
         Failures here collapse projects-tab rendering AND session grouping
         (every project-tagged conversation is rendered under "Ungrouped"
-        until the next successful load). Logged at ERROR; the sidebar does
-        not currently render a dedicated banner — see the Phase 6 PR D
-        follow-ups memo for the planned notify/banner work.
+        until the next successful load). Logged at ERROR; there is no
+        dedicated UI banner today, so operators need to watch logs to
+        tell "empty" from "failed".
         """
         if self._project_store is None:
             return []

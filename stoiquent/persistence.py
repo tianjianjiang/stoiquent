@@ -275,8 +275,9 @@ class ConversationStore:
 
         - ``deleted``: files this process unlinked successfully.
         - ``unlink_failed``: files whose project assignment matched but whose
-          ``unlink`` raised :class:`OSError` (permissions, busy, etc.). The
-          file likely still exists; logged at ERROR.
+          ``unlink`` raised an :class:`OSError` other than
+          :class:`FileNotFoundError` (permissions, busy, etc.). The file
+          likely still exists; logged at ERROR.
         - ``skipped_unparseable``: files that could not be JSON-decoded.
           Project assignment is unknowable; the file is left on disk.
         - ``skipped_unreadable``: files that raised :class:`OSError` on
