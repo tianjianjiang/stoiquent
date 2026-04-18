@@ -362,7 +362,7 @@ def test_delete_by_project_records_unlink_failure(
     def flaky_unlink(self: Path, *args: object, **kwargs: object) -> None:
         if self.name == target_name:
             raise PermissionError("read-only FS")
-        real_unlink(self)
+        real_unlink(self, *args, **kwargs)
 
     monkeypatch.setattr(Path, "unlink", flaky_unlink)
 
@@ -411,6 +411,33 @@ def test_delete_by_project_silent_no_op_on_unsafe_id(tmp_path: Path) -> None:
     assert store.delete_by_project("").complete is True
     assert store.delete_by_project("../etc").deleted == 0
     assert {s.id for s in store.list_conversations()} == {"keep"}
+
+
+def test_delete_by_project_fnfe_is_success_by_proxy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Concurrent removal between scan and unlink is treated as success-
+    by-proxy: it does NOT count in ``deleted`` nor in ``unlink_failed``
+    and leaves ``complete`` True."""
+    store = _make_store(tmp_path)
+    store.save_sync("a1", _sample_messages(), project_id="proj1")
+    store.save_sync("a2", _sample_messages(), project_id="proj1")
+
+    real_unlink = Path.unlink
+    raced_name = "a1.json"
+
+    def racing_unlink(self: Path, *args: object, **kwargs: object) -> None:
+        if self.name == raced_name:
+            raise FileNotFoundError("raced away")
+        real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", racing_unlink)
+
+    result = store.delete_by_project("proj1")
+
+    assert result.deleted == 1
+    assert result.unlink_failed == 0
+    assert result.complete is True
 
 
 async def test_delete_by_project_async_removes_matching(tmp_path: Path) -> None:

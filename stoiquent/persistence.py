@@ -5,7 +5,7 @@ import json
 import logging
 import os
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -16,7 +16,7 @@ from stoiquent.models import SAFE_ID, Message, PersistenceConfig
 logger = logging.getLogger(__name__)
 
 
-@dataclass
+@dataclass(frozen=True)
 class DeleteByProjectResult:
     """Outcome of cascading conversation deletion for a project.
 
@@ -24,7 +24,12 @@ class DeleteByProjectResult:
     ``unlink_failed == skipped_unparseable == skipped_unreadable == 0``.
     Callers that must not leave orphan sessions (see user requirement:
     "delete project means deleting everything") should refuse to advance
-    to the project-record delete unless :meth:`complete` is ``True``.
+    to the project-record delete unless :attr:`complete` is ``True``.
+
+    :attr:`complete` signals it is safe for the caller to proceed with
+    the project-record delete under the orphan-free invariant; it does
+    not by itself prove no orphans exist on disk. Frozen so consumers
+    cannot mutate counters past the gate.
     """
 
     deleted: int = 0
@@ -268,7 +273,7 @@ class ConversationStore:
         callers can decide whether the cascade is complete enough to continue
         with a project-record delete.
 
-        - ``deleted``: files unlinked.
+        - ``deleted``: files this process unlinked successfully.
         - ``unlink_failed``: files whose project assignment matched but whose
           ``unlink`` raised :class:`OSError` (permissions, busy, etc.). The
           file likely still exists; logged at ERROR.
@@ -280,7 +285,9 @@ class ConversationStore:
 
         A concurrent removal of a matching file between scan and unlink is
         treated as success-by-proxy (the file is gone, which is what the
-        caller asked for) and is not counted as a failure.
+        caller asked for) — it is NOT counted in ``deleted`` and does NOT
+        increment ``unlink_failed``; ``complete`` remains ``True`` in that
+        case.
         """
         if not self._conv_dir.exists():
             return DeleteByProjectResult()
@@ -295,7 +302,9 @@ class ConversationStore:
                     path.name,
                     exc_info=True,
                 )
-                result.skipped_unparseable += 1
+                result = replace(
+                    result, skipped_unparseable=result.skipped_unparseable + 1
+                )
                 continue
             except OSError:
                 logger.error(
@@ -303,13 +312,15 @@ class ConversationStore:
                     path.name,
                     exc_info=True,
                 )
-                result.skipped_unreadable += 1
+                result = replace(
+                    result, skipped_unreadable=result.skipped_unreadable + 1
+                )
                 continue
             if data.get("project_id") != project_id:
                 continue
             try:
                 path.unlink()
-                result.deleted += 1
+                result = replace(result, deleted=result.deleted + 1)
             except FileNotFoundError:
                 continue
             except OSError:
@@ -318,7 +329,7 @@ class ConversationStore:
                     path.name,
                     exc_info=True,
                 )
-                result.unlink_failed += 1
+                result = replace(result, unlink_failed=result.unlink_failed + 1)
         return result
 
     async def delete_by_project_async(

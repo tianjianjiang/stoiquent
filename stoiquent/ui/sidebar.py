@@ -97,8 +97,9 @@ class Sidebar:
                 convs = grouped.pop(project.id, [])
                 if convs:
                     self._render_session_group(project.name, convs)
-            # Everything left is either project_id=None or points at a
-            # project that no longer exists; both render under Ungrouped.
+            # Everything left has project_id=None, points at a project
+            # that no longer exists, or belongs to a project the store
+            # failed to load; all three render under Ungrouped.
             leftover = [s for bucket in grouped.values() for s in bucket]
             if leftover:
                 self._render_session_group(_UNGROUPED_LABEL, leftover)
@@ -391,10 +392,11 @@ class Sidebar:
 
         Order: conversations first, project record second. The user's
         explicit requirement for this PR is "no orphan sessions" — so the
-        project-record delete is gated on the cascade being ``complete``
-        (zero unlink failures and zero unreadable matches). Otherwise the
-        project record survives and the cascade can be retried; orphaned
-        conversations would violate the invariant.
+        project-record delete is gated on ``result.complete``, which is
+        True only when ``unlink_failed``, ``skipped_unparseable``, and
+        ``skipped_unreadable`` are all zero. Otherwise the project record
+        survives and the cascade can be retried; orphaned conversations
+        would violate the invariant.
         """
         if self._project_store is None:
             return
@@ -414,9 +416,10 @@ class Sidebar:
                 # whether a retry might succeed (unlink failures can be
                 # transient) or whether the blocker is structural and
                 # needs manual file repair (unparseable / unreadable).
+                # On this branch at least one counter is > 0 by definition,
+                # so the retriable test reduces to "no structural blocker".
                 retriable = (
-                    result.unlink_failed > 0
-                    and result.skipped_unparseable == 0
+                    result.skipped_unparseable == 0
                     and result.skipped_unreadable == 0
                 )
                 guidance = (
@@ -425,13 +428,11 @@ class Sidebar:
                     else "repair or remove the offending files before retrying"
                 )
                 ui.notify(
-                    (
-                        f"Cascade incomplete — deleted {result.deleted}, "
-                        f"unlink_failed={result.unlink_failed}, "
-                        f"unparseable={result.skipped_unparseable}, "
-                        f"unreadable={result.skipped_unreadable}. "
-                        f"Project kept so you can {guidance}. Check logs."
-                    ),
+                    f"Cascade incomplete — deleted {result.deleted}, "
+                    f"unlink_failed={result.unlink_failed}, "
+                    f"unparseable={result.skipped_unparseable}, "
+                    f"unreadable={result.skipped_unreadable}. "
+                    f"Project kept so you can {guidance}. Check logs.",
                     type="warning",
                 )
                 await self._refresh_projects()

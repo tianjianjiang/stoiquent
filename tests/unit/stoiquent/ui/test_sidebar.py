@@ -801,6 +801,53 @@ async def test_delete_project_aborts_on_partial_cascade(
 
 
 @pytest.mark.asyncio
+async def test_delete_project_aborts_on_unreadable_conversation(
+    user: User,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Cascade abort from ``skipped_unreadable`` must route through the
+    structural (repair-or-remove) guidance branch, not the transient-retry
+    one. A regression that collapses the retriable predicate to
+    ``unlink_failed > 0`` would silently mis-advise the user."""
+    session = Session(provider=FakeProvider())
+    store = make_store(tmp_path)
+    store.save_sync("c1", [Message(role="user", content="a")], project_id="p1")
+    project_store = make_project_store(tmp_path)
+    project_store.save_sync(
+        ProjectRecord(id="p1", name="Alpha", folder="/tmp/a", instructions="")
+    )
+
+    real_read = Path.read_text
+
+    def flaky_read(self: Path, *args: object, **kwargs: object) -> str:
+        if self.name == "c1.json":
+            raise PermissionError("denied")
+        return real_read(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", flaky_read)
+
+    sidebar_ref: list[Sidebar] = []
+
+    @ui.page("/test-delete-unreadable")
+    async def page() -> None:
+        s = Sidebar(session, store, lambda *_: None, project_store)
+        sidebar_ref.append(s)
+        await s.render()
+
+    await user.open("/test-delete-unreadable")
+    with patch("stoiquent.ui.sidebar.ui.notify") as mock_notify:
+        await sidebar_ref[0]._delete_project("p1")
+
+    assert project_store.load("p1") is not None
+    message = mock_notify.call_args.args[0]
+    assert "unreadable=1" in message
+    assert "repair or remove the offending files" in message
+    caplog.clear()
+
+
+@pytest.mark.asyncio
 async def test_delete_project_aborts_on_corrupt_conversation(
     user: User, tmp_path: Path
 ) -> None:
