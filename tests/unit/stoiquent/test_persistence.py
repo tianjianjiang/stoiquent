@@ -413,6 +413,67 @@ def test_delete_by_project_silent_no_op_on_unsafe_id(tmp_path: Path) -> None:
     assert {s.id for s in store.list_conversations()} == {"keep"}
 
 
+def test_delete_by_project_fnfe_on_read_is_success_by_proxy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A race between ``glob`` and ``read_text`` must be treated the
+    same as the unlink-side race: success-by-proxy, not an unreadable
+    failure that aborts the cascade."""
+    store = _make_store(tmp_path)
+    store.save_sync("a1", _sample_messages(), project_id="proj1")
+    store.save_sync("a2", _sample_messages(), project_id="proj1")
+
+    real_read = Path.read_text
+    raced_name = "a1.json"
+
+    def racing_read(self: Path, *args: object, **kwargs: object) -> str:
+        if self.name == raced_name:
+            raise FileNotFoundError("raced away")
+        return real_read(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", racing_read)
+
+    result = store.delete_by_project("proj1")
+
+    assert result.deleted == 1
+    assert result.skipped_unreadable == 0
+    assert result.complete is True
+
+
+def test_delete_by_project_unicode_decode_error_is_unparseable(
+    tmp_path: Path
+) -> None:
+    """Non-UTF-8 bytes on disk cannot reveal a project_id; count as
+    unparseable so the caller sees `complete=False` and aborts."""
+    store = _make_store(tmp_path)
+    store.save_sync("good", _sample_messages(), project_id="proj1")
+    (tmp_path / "conversations" / "bad.json").write_bytes(b"\xff\xfe\x00not utf8")
+
+    result = store.delete_by_project("proj1")
+
+    assert result.deleted == 1
+    assert result.skipped_unparseable == 1
+    assert result.complete is False
+
+
+def test_delete_by_project_non_object_payload_is_unparseable(
+    tmp_path: Path
+) -> None:
+    """Valid JSON that isn't a dict cannot carry a project_id and
+    must not raise AttributeError inside the loop."""
+    store = _make_store(tmp_path)
+    store.save_sync("good", _sample_messages(), project_id="proj1")
+    (tmp_path / "conversations" / "scalar.json").write_text("42", encoding="utf-8")
+    (tmp_path / "conversations" / "list.json").write_text("[]", encoding="utf-8")
+    (tmp_path / "conversations" / "null.json").write_text("null", encoding="utf-8")
+
+    result = store.delete_by_project("proj1")
+
+    assert result.deleted == 1
+    assert result.skipped_unparseable == 3
+    assert result.complete is False
+
+
 def test_delete_by_project_fnfe_is_success_by_proxy(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

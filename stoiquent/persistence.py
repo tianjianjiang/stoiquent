@@ -283,11 +283,11 @@ class ConversationStore:
           read. Project assignment is unknowable; the file is left on disk
           and logged at ERROR.
 
-        A concurrent removal of a matching file between scan and unlink is
-        treated as success-by-proxy (the file is gone, which is what the
-        caller asked for) — it is NOT counted in ``deleted`` and does NOT
-        increment ``unlink_failed``; ``complete`` remains ``True`` in that
-        case.
+        A concurrent removal between scan and either subsequent I/O step
+        (read or unlink) is treated as success-by-proxy (the file is gone,
+        which is what the caller asked for) — it is NOT counted in
+        ``deleted`` and does NOT increment ``unlink_failed`` or any
+        skipped counter; ``complete`` remains ``True`` in that case.
         """
         if not self._conv_dir.exists():
             return DeleteByProjectResult()
@@ -296,7 +296,11 @@ class ConversationStore:
         for path in self._conv_dir.glob("*.json"):
             try:
                 data = json.loads(path.read_text(encoding="utf-8"))
-            except json.JSONDecodeError:
+            except FileNotFoundError:
+                # Raced with a concurrent delete between glob and read —
+                # success-by-proxy, exactly like the unlink-side race.
+                continue
+            except (json.JSONDecodeError, UnicodeDecodeError):
                 logger.warning(
                     "Skipping unparseable conversation file during project delete: %s",
                     path.name,
@@ -314,6 +318,17 @@ class ConversationStore:
                 )
                 result = replace(
                     result, skipped_unreadable=result.skipped_unreadable + 1
+                )
+                continue
+            if not isinstance(data, dict):
+                # Valid JSON that isn't an object (e.g. a bare scalar or
+                # list) cannot carry a project_id; treat as unparseable.
+                logger.warning(
+                    "Skipping non-object conversation payload during project delete: %s",
+                    path.name,
+                )
+                result = replace(
+                    result, skipped_unparseable=result.skipped_unparseable + 1
                 )
                 continue
             if data.get("project_id") != project_id:

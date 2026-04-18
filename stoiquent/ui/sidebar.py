@@ -156,9 +156,10 @@ class Sidebar:
         """Return the current project list, or ``[]`` if loading fails.
 
         Failures here collapse projects-tab rendering AND session grouping
-        (every project-tagged conversation suddenly becomes orphaned). Log
-        at ERROR so an operator can correlate with the user-visible banner
-        in ``_refresh_projects``.
+        (every project-tagged conversation is rendered under "Ungrouped"
+        until the next successful load). Logged at ERROR; the sidebar does
+        not currently render a dedicated banner — see the Phase 6 PR D
+        follow-ups memo for the planned notify/banner work.
         """
         if self._project_store is None:
             return []
@@ -416,8 +417,10 @@ class Sidebar:
                 # whether a retry might succeed (unlink failures can be
                 # transient) or whether the blocker is structural and
                 # needs manual file repair (unparseable / unreadable).
-                # On this branch at least one counter is > 0 by definition,
-                # so the retriable test reduces to "no structural blocker".
+                # On this branch at least one of the three failure
+                # counters (unlink_failed, skipped_unparseable,
+                # skipped_unreadable) is > 0 by definition, so the
+                # retriable test reduces to "no structural blocker".
                 retriable = (
                     result.skipped_unparseable == 0
                     and result.skipped_unreadable == 0
