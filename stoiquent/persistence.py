@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import tempfile
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -13,6 +14,36 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from stoiquent.models import SAFE_ID, Message, PersistenceConfig
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class DeleteByProjectResult:
+    """Outcome of cascading conversation deletion for a project.
+
+    The cascade is considered complete only when
+    ``unlink_failed == skipped_unparseable == skipped_unreadable == 0``.
+    Callers that must not leave orphan sessions (see user requirement:
+    "delete project means deleting everything") should refuse to advance
+    to the project-record delete unless :attr:`complete` is ``True``.
+
+    :attr:`complete` signals it is safe for the caller to proceed with
+    the project-record delete under the orphan-free invariant; it does
+    not by itself prove no orphans exist on disk. Frozen so consumers
+    cannot mutate counters past the gate.
+    """
+
+    deleted: int = 0
+    unlink_failed: int = 0
+    skipped_unparseable: int = 0
+    skipped_unreadable: int = 0
+
+    @property
+    def complete(self) -> bool:
+        return (
+            self.unlink_failed == 0
+            and self.skipped_unparseable == 0
+            and self.skipped_unreadable == 0
+        )
 
 
 def _validate_optional_safe_id(v: str | None) -> str | None:
@@ -234,6 +265,94 @@ class ConversationStore:
                 "Failed to delete conversation %s", session_id, exc_info=True
             )
             return False
+
+    def delete_by_project(self, project_id: str) -> DeleteByProjectResult:
+        """Delete every conversation tied to ``project_id``.
+
+        Returns a :class:`DeleteByProjectResult` with per-category counts so
+        callers can decide whether the cascade is complete enough to continue
+        with a project-record delete.
+
+        - ``deleted``: files this process unlinked successfully.
+        - ``unlink_failed``: files whose project assignment matched but whose
+          ``unlink`` raised an :class:`OSError` other than
+          :class:`FileNotFoundError` (permissions, busy, etc.). The file
+          likely still exists; logged at ERROR.
+        - ``skipped_unparseable``: files that could not be JSON-decoded.
+          Project assignment is unknowable; the file is left on disk.
+        - ``skipped_unreadable``: files that raised :class:`OSError` on
+          read. Project assignment is unknowable; the file is left on disk
+          and logged at ERROR.
+
+        A concurrent removal between scan and either subsequent I/O step
+        (read or unlink) is treated as success-by-proxy (the file is gone,
+        which is what the caller asked for) — it is NOT counted in
+        ``deleted`` and does NOT increment ``unlink_failed`` or any
+        skipped counter; ``complete`` remains ``True`` in that case.
+        """
+        if not self._conv_dir.exists():
+            return DeleteByProjectResult()
+
+        result = DeleteByProjectResult()
+        for path in self._conv_dir.glob("*.json"):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except FileNotFoundError:
+                # Raced with a concurrent delete between glob and read —
+                # success-by-proxy, exactly like the unlink-side race.
+                continue
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                logger.warning(
+                    "Skipping unparseable conversation file during project delete: %s",
+                    path.name,
+                    exc_info=True,
+                )
+                result = replace(
+                    result, skipped_unparseable=result.skipped_unparseable + 1
+                )
+                continue
+            except OSError:
+                logger.error(
+                    "Unreadable conversation file during project delete: %s",
+                    path.name,
+                    exc_info=True,
+                )
+                result = replace(
+                    result, skipped_unreadable=result.skipped_unreadable + 1
+                )
+                continue
+            if not isinstance(data, dict):
+                # Valid JSON that isn't an object (e.g. a bare scalar or
+                # list) cannot carry a project_id; treat as unparseable.
+                logger.warning(
+                    "Skipping non-object conversation payload during project delete: %s",
+                    path.name,
+                )
+                result = replace(
+                    result, skipped_unparseable=result.skipped_unparseable + 1
+                )
+                continue
+            if data.get("project_id") != project_id:
+                continue
+            try:
+                path.unlink()
+                result = replace(result, deleted=result.deleted + 1)
+            except FileNotFoundError:
+                continue
+            except OSError:
+                logger.error(
+                    "Failed to unlink conversation %s during project delete",
+                    path.name,
+                    exc_info=True,
+                )
+                result = replace(result, unlink_failed=result.unlink_failed + 1)
+        return result
+
+    async def delete_by_project_async(
+        self, project_id: str
+    ) -> DeleteByProjectResult:
+        """Async variant of delete_by_project via thread pool."""
+        return await asyncio.to_thread(self.delete_by_project, project_id)
 
 
 def _derive_title(messages: list[Message]) -> str:

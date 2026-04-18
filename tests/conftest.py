@@ -12,6 +12,7 @@ from stoiquent.models import (
     StreamChunk,
 )
 from stoiquent.persistence import ConversationStore
+from stoiquent.projects import ProjectStore
 from stoiquent.skills.models import Skill, SkillMeta
 
 pytest_plugins = ["nicegui.testing.plugin"]
@@ -37,6 +38,14 @@ def make_store(tmp_path: Path) -> ConversationStore:
     """Create a ConversationStore backed by a temporary directory."""
     config = PersistenceConfig(data_dir=str(tmp_path))
     store = ConversationStore(config)
+    store.ensure_dirs()
+    return store
+
+
+def make_project_store(tmp_path: Path) -> ProjectStore:
+    """Create a ProjectStore backed by a temporary directory."""
+    config = PersistenceConfig(data_dir=str(tmp_path))
+    store = ProjectStore(config)
     store.ensure_dirs()
     return store
 

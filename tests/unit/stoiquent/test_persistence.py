@@ -297,6 +297,222 @@ def test_delete_returns_false_for_missing(tmp_path: Path) -> None:
     assert store.delete("nonexistent") is False
 
 
+# --- ConversationStore: delete_by_project ---
+
+
+def test_delete_by_project_removes_matching(tmp_path: Path) -> None:
+    store = _make_store(tmp_path)
+    store.save_sync("a1", _sample_messages(), project_id="proj1")
+    store.save_sync("a2", _sample_messages(), project_id="proj1")
+    store.save_sync("b1", _sample_messages(), project_id="proj2")
+
+    result = store.delete_by_project("proj1")
+
+    assert result.deleted == 2
+    assert result.complete is True
+    assert {s.id for s in store.list_conversations()} == {"b1"}
+
+
+def test_delete_by_project_leaves_unrelated_intact(tmp_path: Path) -> None:
+    store = _make_store(tmp_path)
+    store.save_sync("keep1", _sample_messages(), project_id="other")
+    store.save_sync("keep2", _sample_messages(), project_id=None)
+
+    result = store.delete_by_project("proj1")
+
+    assert result.deleted == 0
+    assert result.complete is True
+    assert {s.id for s in store.list_conversations()} == {"keep1", "keep2"}
+
+
+def test_delete_by_project_returns_empty_when_dir_missing(tmp_path: Path) -> None:
+    config = PersistenceConfig(data_dir=str(tmp_path))
+    store = ConversationStore(config)
+    # ensure_dirs not called
+    result = store.delete_by_project("proj1")
+    assert result.deleted == 0
+    assert result.complete is True
+
+
+def test_delete_by_project_skips_corrupt_files(tmp_path: Path) -> None:
+    store = _make_store(tmp_path)
+    store.save_sync("good", _sample_messages(), project_id="proj1")
+    (tmp_path / "conversations" / "bad.json").write_text("{not json", encoding="utf-8")
+
+    result = store.delete_by_project("proj1")
+    assert result.deleted == 1
+    assert result.skipped_unparseable == 1
+    assert result.complete is False
+    # Corrupt file is left alone (assignment is unknowable).
+    assert (tmp_path / "conversations" / "bad.json").exists()
+
+
+def test_delete_by_project_records_unlink_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Per-file OSError on unlink must surface in the result so the
+    caller can decide whether to proceed with the project-record delete."""
+    store = _make_store(tmp_path)
+    store.save_sync("a1", _sample_messages(), project_id="proj1")
+    store.save_sync("a2", _sample_messages(), project_id="proj1")
+
+    real_unlink = Path.unlink
+    target_name = "a1.json"
+
+    def flaky_unlink(self: Path, *args: object, **kwargs: object) -> None:
+        if self.name == target_name:
+            raise PermissionError("read-only FS")
+        real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", flaky_unlink)
+
+    result = store.delete_by_project("proj1")
+
+    assert result.deleted == 1
+    assert result.unlink_failed == 1
+    assert result.complete is False
+    remaining = {p.name for p in (tmp_path / "conversations").glob("*.json")}
+    assert target_name in remaining
+
+
+def test_delete_by_project_records_read_osError(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """OSError on read (e.g., permission denied) is distinguished from
+    JSON corruption so we can log at ERROR and surface it to the user."""
+    store = _make_store(tmp_path)
+    store.save_sync("a1", _sample_messages(), project_id="proj1")
+
+    real_read = Path.read_text
+
+    def flaky_read(self: Path, *args: object, **kwargs: object) -> str:
+        if self.name == "a1.json":
+            raise PermissionError("denied")
+        return real_read(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", flaky_read)
+
+    result = store.delete_by_project("proj1")
+    assert result.deleted == 0
+    assert result.skipped_unreadable == 1
+    assert result.complete is False
+    # File is still on disk; unreadable is NOT permission to delete.
+    assert (tmp_path / "conversations" / "a1.json").exists()
+
+
+def test_delete_by_project_silent_no_op_on_unsafe_id(tmp_path: Path) -> None:
+    """Locks current behavior: delete_by_project does not validate the id;
+    unsafe values match nothing rather than raising. If future work moves
+    to raising, update this test rather than changing the behavior silently.
+    """
+    store = _make_store(tmp_path)
+    store.save_sync("keep", _sample_messages(), project_id="proj1")
+
+    assert store.delete_by_project("").complete is True
+    assert store.delete_by_project("../etc").deleted == 0
+    assert {s.id for s in store.list_conversations()} == {"keep"}
+
+
+def test_delete_by_project_fnfe_on_read_is_success_by_proxy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A race between ``glob`` and ``read_text`` must be treated the
+    same as the unlink-side race: success-by-proxy, not an unreadable
+    failure that aborts the cascade."""
+    store = _make_store(tmp_path)
+    store.save_sync("a1", _sample_messages(), project_id="proj1")
+    store.save_sync("a2", _sample_messages(), project_id="proj1")
+
+    real_read = Path.read_text
+    raced_name = "a1.json"
+
+    def racing_read(self: Path, *args: object, **kwargs: object) -> str:
+        if self.name == raced_name:
+            raise FileNotFoundError("raced away")
+        return real_read(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", racing_read)
+
+    result = store.delete_by_project("proj1")
+
+    assert result.deleted == 1
+    assert result.skipped_unreadable == 0
+    assert result.complete is True
+
+
+def test_delete_by_project_unicode_decode_error_is_unparseable(
+    tmp_path: Path
+) -> None:
+    """Non-UTF-8 bytes on disk cannot reveal a project_id; count as
+    unparseable so the caller sees `complete=False` and aborts."""
+    store = _make_store(tmp_path)
+    store.save_sync("good", _sample_messages(), project_id="proj1")
+    (tmp_path / "conversations" / "bad.json").write_bytes(b"\xff\xfe\x00not utf8")
+
+    result = store.delete_by_project("proj1")
+
+    assert result.deleted == 1
+    assert result.skipped_unparseable == 1
+    assert result.complete is False
+
+
+def test_delete_by_project_non_object_payload_is_unparseable(
+    tmp_path: Path
+) -> None:
+    """Valid JSON that isn't a dict cannot carry a project_id and
+    must not raise AttributeError inside the loop."""
+    store = _make_store(tmp_path)
+    store.save_sync("good", _sample_messages(), project_id="proj1")
+    (tmp_path / "conversations" / "scalar.json").write_text("42", encoding="utf-8")
+    (tmp_path / "conversations" / "list.json").write_text("[]", encoding="utf-8")
+    (tmp_path / "conversations" / "null.json").write_text("null", encoding="utf-8")
+
+    result = store.delete_by_project("proj1")
+
+    assert result.deleted == 1
+    assert result.skipped_unparseable == 3
+    assert result.complete is False
+
+
+def test_delete_by_project_fnfe_is_success_by_proxy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Concurrent removal between scan and unlink is treated as success-
+    by-proxy: it does NOT count in ``deleted`` nor in ``unlink_failed``
+    and leaves ``complete`` True."""
+    store = _make_store(tmp_path)
+    store.save_sync("a1", _sample_messages(), project_id="proj1")
+    store.save_sync("a2", _sample_messages(), project_id="proj1")
+
+    real_unlink = Path.unlink
+    raced_name = "a1.json"
+
+    def racing_unlink(self: Path, *args: object, **kwargs: object) -> None:
+        if self.name == raced_name:
+            raise FileNotFoundError("raced away")
+        real_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", racing_unlink)
+
+    result = store.delete_by_project("proj1")
+
+    assert result.deleted == 1
+    assert result.unlink_failed == 0
+    assert result.complete is True
+
+
+async def test_delete_by_project_async_removes_matching(tmp_path: Path) -> None:
+    store = _make_store(tmp_path)
+    store.save_sync("a1", _sample_messages(), project_id="proj1")
+    store.save_sync("b1", _sample_messages(), project_id="proj2")
+
+    result = await store.delete_by_project_async("proj1")
+
+    assert result.deleted == 1
+    assert result.complete is True
+    assert {s.id for s in store.list_conversations()} == {"b1"}
+
+
 # --- ConversationStore: path traversal ---
 
 
