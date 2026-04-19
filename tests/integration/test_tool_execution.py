@@ -170,6 +170,7 @@ async def test_should_execute_tool_call_with_fragmented_deltas() -> None:
         m for m in session.messages if m.role == "assistant" and m.tool_calls
     )
     assert assistant_with_tools.tool_calls is not None
+    assert assistant_with_tools.tool_calls[0].id == "call_fragmented"
     assert assistant_with_tools.tool_calls[0].arguments == {"name": "Bob"}
     # Preface content must survive into the assistant history somewhere —
     # assert on the aggregate rather than the specific layout so a future
@@ -282,6 +283,15 @@ async def test_should_dispatch_parallel_tool_calls() -> None:
 
     starts = [c.tool_call_start for c in chunks if c.tool_call_start is not None]
     assert [tc.id for tc in starts] == ["call_a", "call_b"]
+    results = [c.tool_call_result for c in chunks if c.tool_call_result is not None]
+    assert [r.tool_call_id for r in results] == ["call_a", "call_b"]
+
+    turn2_roles = [m.role for m in provider.calls[1]["messages"]]
+    assert turn2_roles == ["system", "user", "assistant", "tool", "tool"], turn2_roles
+    turn2_tool_ids = [
+        m.tool_call_id for m in provider.calls[1]["messages"] if m.role == "tool"
+    ]
+    assert turn2_tool_ids == ["call_a", "call_b"]
 
 
 @skip_no_ollama
