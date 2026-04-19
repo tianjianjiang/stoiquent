@@ -12,6 +12,7 @@ from tests.integration.conftest import skip_no_ollama
 
 @skip_no_ollama
 @pytest.mark.integration
+@pytest.mark.ollama
 @pytest.mark.asyncio
 async def test_should_raise_on_model_not_found() -> None:
     """Ollama returns 404 for unknown models -> RuntimeError with guidance."""
