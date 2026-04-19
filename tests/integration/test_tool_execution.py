@@ -205,11 +205,10 @@ async def test_fake_provider_raises_on_overrun_through_loop() -> None:
                 finish_reason="tool_calls",
             )
         ],
-        # Turn 2 deliberately missing — the loop will re-enter for the
-        # final reply and the fake raises on the third stream() call.
     ]
-    # Script only one turn, then also engineer a third call by forcing
-    # another tool call on turn 2.
+    # Script two tool-calling turns so the loop requests a third
+    # stream() call — that 3rd call has no script and raises
+    # IndexError("turn 2 requested") (0-indexed, i.e. the 3rd call).
     under_scripted.append(
         [
             StreamChunk(
