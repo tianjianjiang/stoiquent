@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
+import signal
+import subprocess
 import uuid
 from contextlib import AsyncExitStack
 from typing import Any
@@ -11,6 +15,49 @@ from mcp.client.stdio import stdio_client
 from stoiquent.skills.models import MCPServerDef
 
 logger = logging.getLogger(__name__)
+
+_REAP_TIMEOUT_SECONDS = 5.0
+
+
+def _direct_children() -> set[int]:
+    try:
+        result = subprocess.run(
+            ["pgrep", "-P", str(os.getpid())],
+            capture_output=True,
+            text=True,
+            timeout=2.0,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):  # pragma: no cover
+        return set()
+    if result.returncode not in (0, 1):  # 0=found, 1=none, >=2=error
+        return set()  # pragma: no cover
+    return {int(p) for p in result.stdout.split() if p.strip()}
+
+
+async def _reap_pgroup(pid: int, timeout: float = _REAP_TIMEOUT_SECONDS) -> bool:
+    """Belt-and-suspenders reap after stdio_client teardown.
+
+    anyio's stdio_client already SIGTERM/SIGKILL-escalates, but its reap can
+    return before the OS releases the PID/FDs, leaving a window where the
+    next test sees stale state. Returns True if cleanly gone, False if
+    SIGKILL fallback fired."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while loop.time() < deadline:
+        try:
+            os.kill(pid, 0)
+        except (ProcessLookupError, PermissionError):
+            return True
+        await asyncio.sleep(0.05)
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        return True
+    logger.warning(
+        "MCPBridge force-killed orphan subprocess pgid=%d after %.1fs",
+        pid, timeout,
+    )
+    return False
 
 
 class MCPBridge:
@@ -27,6 +74,7 @@ class MCPBridge:
             env=server_def.env if server_def.env else None,
         )
 
+        children_before = _direct_children()
         exit_stack = AsyncExitStack()
         try:
             transport = await exit_stack.enter_async_context(
@@ -44,12 +92,14 @@ class MCPBridge:
                 for tool in response.tools
             ]
 
+            new_pids = frozenset(_direct_children() - children_before)
             conn = _ServerConnection(
                 server_id=server_id,
                 server_def=server_def,
                 session=session,
                 exit_stack=exit_stack,
                 tools=tools,
+                pids=new_pids,
             )
             self._servers[server_id] = conn
             logger.info(
@@ -118,6 +168,9 @@ class MCPBridge:
             # anyio cancel scope CancelledError is expected when stopping
             # multiple MCP servers in the same event loop task
             logger.debug("MCP server cleanup for '%s' completed with suppressed error", server_id)
+        finally:
+            for pid in conn.pids:
+                await _reap_pgroup(pid)
 
     async def stop_all(self) -> None:
         for server_id in list(self._servers):
@@ -129,7 +182,7 @@ class MCPBridge:
 
 
 class _ServerConnection:
-    __slots__ = ("server_id", "server_def", "session", "exit_stack", "tools")
+    __slots__ = ("server_id", "server_def", "session", "exit_stack", "tools", "pids")
 
     def __init__(
         self,
@@ -138,12 +191,14 @@ class _ServerConnection:
         session: ClientSession,
         exit_stack: AsyncExitStack,
         tools: list[dict[str, Any]],
+        pids: frozenset[int] = frozenset(),
     ) -> None:
         self.server_id = server_id
         self.server_def = server_def
         self.session = session
         self.exit_stack = exit_stack
         self.tools = tools
+        self.pids = pids
 
 
 def _mcp_tool_to_openai(

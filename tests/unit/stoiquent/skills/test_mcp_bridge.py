@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -7,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from stoiquent.skills.mcp_bridge import MCPBridge, _mcp_tool_to_openai
+from stoiquent.skills.mcp_bridge import MCPBridge, _mcp_tool_to_openai, _reap_pgroup
 from stoiquent.skills.models import MCPServerDef
 
 ECHO_SERVER = str(
@@ -166,3 +168,77 @@ async def test_bridge_start_server_failure() -> None:
     with pytest.raises(Exception):
         await bridge.start_server(server_def)
     assert bridge.server_ids == []
+
+
+@pytest.mark.asyncio
+async def test_reap_pgroup_returns_true_when_pid_already_gone() -> None:
+    # PID 1 (init) is owned by another user; os.kill(_, 0) raises PermissionError,
+    # which _reap_pgroup treats as "not ours, stop polling".
+    assert await _reap_pgroup(1, timeout=0.05) is True
+
+
+@pytest.mark.asyncio
+async def test_reap_pgroup_force_kills_runaway_subprocess() -> None:
+    proc = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(30)"],
+        start_new_session=True,
+    )
+    try:
+        result = await _reap_pgroup(proc.pid, timeout=0.2)
+        assert result is False, "SIGKILL fallback should have fired"
+        proc.wait(timeout=2.0)
+        assert proc.poll() is not None
+    finally:
+        if proc.poll() is None:  # pragma: no cover
+            proc.kill()
+            proc.wait()
+
+
+def _count_open_fds() -> int:
+    """POSIX-only open-FD count for the current process; -1 if unsupported."""
+    pid = os.getpid()
+    for path in (f"/proc/{pid}/fd", "/dev/fd"):
+        try:
+            return len(os.listdir(path))
+        except (FileNotFoundError, OSError):
+            continue
+    return -1  # pragma: no cover
+
+
+@pytest.mark.asyncio
+async def test_bridge_start_stop_tight_loop_no_subprocess_or_fd_leak() -> None:
+    """E2 acceptance: 100 start/stop cycles leak no subprocesses or FDs.
+
+    Targets the de-flake plan's 'MCP subprocess stdio race on
+    teardown-vs-next-start' root cause; if FDs/processes leak, a
+    session-scoped event loop carries dirty state into the next test."""
+    server_def = MCPServerDef(command=sys.executable, args=[ECHO_SERVER])
+
+    # Warm up once so first-iteration imports/caches don't skew FD count.
+    warmup = MCPBridge()
+    await warmup.start_server(server_def)
+    await warmup.stop_all()
+
+    initial_fd_count = _count_open_fds()
+    leaked_pids: list[int] = []
+
+    for _ in range(100):
+        bridge = MCPBridge()
+        sid = await bridge.start_server(server_def)
+        tracked = bridge._servers[sid].pids
+        await bridge.stop_all()
+        for pid in tracked:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                continue
+            leaked_pids.append(pid)
+
+    assert leaked_pids == [], f"Subprocess leak across 100 cycles: {leaked_pids}"
+
+    final_fd_count = _count_open_fds()
+    if initial_fd_count >= 0:
+        # Allow small fluctuation (logging handlers, etc.); guard against O(N) leak.
+        assert final_fd_count - initial_fd_count < 10, (
+            f"FD leak across 100 cycles: {initial_fd_count} -> {final_fd_count}"
+        )
