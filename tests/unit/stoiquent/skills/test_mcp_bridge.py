@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import subprocess
 import sys
@@ -100,6 +101,26 @@ async def test_bridge_start_and_stop_real_server() -> None:
 
     await bridge.stop_server(server_id)
     assert server_id not in bridge.server_ids
+
+
+@pytest.mark.asyncio
+async def test_bridge_call_tool_evicts_dead_server(monkeypatch) -> None:
+    """When the MCP session dies mid-call, the bridge must evict the dead
+    server and surface a typed error string. Becomes load-bearing under E2's
+    aggressive reap: a subprocess could be SIGKILLed mid-call."""
+    bridge = MCPBridge()
+    sid = await bridge.start_server(
+        MCPServerDef(command=sys.executable, args=[ECHO_SERVER])
+    )
+
+    async def _broken_call_tool(*_args, **_kwargs):
+        raise BrokenPipeError("simulated dead server")
+
+    monkeypatch.setattr(bridge._servers[sid].session, "call_tool", _broken_call_tool)
+
+    result = await bridge.call_tool(sid, "echo", {"message": "hi"})
+    assert "no longer available" in result
+    assert sid not in bridge.server_ids, "dead server must be evicted from registry"
 
 
 @pytest.mark.asyncio
@@ -269,6 +290,17 @@ async def test_stop_server_logs_aclose_exception_at_error(monkeypatch, caplog) -
         raise RuntimeError("simulated aclose failure")
 
     monkeypatch.setattr(bridge._servers[sid].exit_stack, "aclose", _raising_aclose)
+
+    import stoiquent.skills.mcp_bridge as bridge_mod
+    reap_calls: list[int] = []
+    real_reap = bridge_mod._reap_pgroup
+
+    async def _counting_reap(pid: int, timeout: float = 5.0) -> bool:
+        reap_calls.append(pid)
+        return await real_reap(pid, timeout)
+
+    monkeypatch.setattr(bridge_mod, "_reap_pgroup", _counting_reap)
+
     with caplog.at_level("ERROR", logger="stoiquent.skills.mcp_bridge"):
         await bridge.stop_server(sid)
     # R2's narrowed exception split must surface real teardown failures at
@@ -277,6 +309,10 @@ async def test_stop_server_logs_aclose_exception_at_error(monkeypatch, caplog) -
         "cleanup failed" in r.message and r.levelname == "ERROR"
         for r in caplog.records
     ), f"expected ERROR log; got {[(r.levelname, r.message) for r in caplog.records]}"
+    # The finally-block reap MUST still run after aclose explodes —
+    # otherwise the subprocess-leak guarantee silently degrades in the
+    # exact failure mode R2's exception split was designed to survive.
+    assert reap_calls, "reap loop did not run after aclose raised"
     assert bridge.server_ids == []
 
 
@@ -287,10 +323,8 @@ async def test_stop_server_logs_aclose_cancelled_at_debug(monkeypatch, caplog) -
         MCPServerDef(command=sys.executable, args=[ECHO_SERVER])
     )
 
-    import asyncio as _asyncio
-
     async def _cancelled_aclose() -> None:
-        raise _asyncio.CancelledError()
+        raise asyncio.CancelledError()
 
     monkeypatch.setattr(bridge._servers[sid].exit_stack, "aclose", _cancelled_aclose)
     with caplog.at_level("DEBUG", logger="stoiquent.skills.mcp_bridge"):
