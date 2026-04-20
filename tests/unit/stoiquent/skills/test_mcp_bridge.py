@@ -172,8 +172,18 @@ async def test_bridge_start_server_failure() -> None:
 
 @pytest.mark.asyncio
 async def test_reap_pgroup_returns_true_when_pid_already_gone() -> None:
-    # PID 1 (init) is owned by another user; os.kill(_, 0) raises PermissionError,
-    # which _reap_pgroup treats as "not ours, stop polling".
+    # Spawn-then-wait gives a guaranteed-exited PID without signalling init,
+    # which would be unsafe under root (e.g., container dev/CI environments).
+    proc = subprocess.Popen([sys.executable, "-c", "pass"])
+    proc.wait()
+    assert await _reap_pgroup(proc.pid, timeout=0.05) is True
+
+
+@pytest.mark.asyncio
+async def test_reap_pgroup_refuses_to_signal_sentinel_pids() -> None:
+    # Guards against `_direct_children()` ever leaking 0/1 into `pids`,
+    # which would otherwise SIGKILL our own process group / init.
+    assert await _reap_pgroup(0, timeout=0.05) is True
     assert await _reap_pgroup(1, timeout=0.05) is True
 
 
@@ -192,6 +202,46 @@ async def test_reap_pgroup_force_kills_runaway_subprocess() -> None:
         if proc.poll() is None:  # pragma: no cover
             proc.kill()
             proc.wait()
+
+
+@pytest.mark.asyncio
+async def test_reap_pgroup_uses_kill_when_not_session_leader() -> None:
+    # Spawn without start_new_session so child shares parent's pgid;
+    # _reap_pgroup must detect pgid != pid and use os.kill, not os.killpg
+    # (which would target the test runner's group).
+    proc = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(30)"],
+    )
+    assert os.getpgid(proc.pid) != proc.pid, "child unexpectedly is its own session leader"
+    try:
+        result = await _reap_pgroup(proc.pid, timeout=0.2)
+        assert result is False
+        proc.wait(timeout=2.0)
+        assert proc.poll() is not None
+    finally:
+        if proc.poll() is None:  # pragma: no cover
+            proc.kill()
+            proc.wait()
+
+
+@pytest.mark.asyncio
+async def test_stop_server_logs_when_reap_raises(monkeypatch, caplog) -> None:
+    import stoiquent.skills.mcp_bridge as bridge_mod
+
+    bridge = MCPBridge()
+    sid = await bridge.start_server(
+        MCPServerDef(command=sys.executable, args=[ECHO_SERVER])
+    )
+
+    async def _boom(_pid: int, timeout: float = 5.0) -> bool:
+        raise RuntimeError("simulated reap failure")
+
+    monkeypatch.setattr(bridge_mod, "_reap_pgroup", _boom)
+    with caplog.at_level("ERROR", logger="stoiquent.skills.mcp_bridge"):
+        await bridge.stop_server(sid)
+    # Reap exception should be logged with server context, not propagated.
+    assert any("MCPBridge reap raised" in r.message for r in caplog.records)
+    assert bridge.server_ids == []
 
 
 def _count_open_fds() -> int:
@@ -220,6 +270,8 @@ async def test_bridge_start_stop_tight_loop_no_subprocess_or_fd_leak() -> None:
     await warmup.stop_all()
 
     initial_fd_count = _count_open_fds()
+    if initial_fd_count < 0:  # pragma: no cover
+        pytest.skip("FD introspection unavailable on this platform")
     leaked_pids: list[int] = []
 
     for _ in range(100):
@@ -230,15 +282,16 @@ async def test_bridge_start_stop_tight_loop_no_subprocess_or_fd_leak() -> None:
         for pid in tracked:
             try:
                 os.kill(pid, 0)
-            except ProcessLookupError:
+            except (ProcessLookupError, PermissionError):
+                # ProcessLookupError = gone; PermissionError = PID recycled
+                # to another UID's process (not our leak).
                 continue
             leaked_pids.append(pid)
 
     assert leaked_pids == [], f"Subprocess leak across 100 cycles: {leaked_pids}"
 
     final_fd_count = _count_open_fds()
-    if initial_fd_count >= 0:
-        # Allow small fluctuation (logging handlers, etc.); guard against O(N) leak.
-        assert final_fd_count - initial_fd_count < 10, (
-            f"FD leak across 100 cycles: {initial_fd_count} -> {final_fd_count}"
-        )
+    # Allow small fluctuation (logging handlers, etc.); guard against O(N) leak.
+    assert final_fd_count - initial_fd_count < 10, (
+        f"FD leak across 100 cycles: {initial_fd_count} -> {final_fd_count}"
+    )
