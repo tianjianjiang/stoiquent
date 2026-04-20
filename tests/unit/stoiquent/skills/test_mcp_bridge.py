@@ -20,8 +20,8 @@ ECHO_SERVER = str(
 @pytest.fixture(autouse=True)
 def _reset_pgrep_warning_flag():
     # Module-global one-shot flag persists across the interpreter; resetting
-    # per test avoids cross-test coupling where the first failing test
-    # silences warnings for all later tests.
+    # per test avoids cross-test coupling where the first test that
+    # exercises a pgrep-unusable path silences warnings for all later tests.
     import stoiquent.skills.mcp_bridge as bridge_mod
     bridge_mod._pgrep_unusable_warned = False
     yield
@@ -233,6 +233,75 @@ async def test_reap_pgroup_uses_kill_when_not_session_leader() -> None:
         if proc.poll() is None:  # pragma: no cover
             proc.kill()
             proc.wait()
+
+
+def test_direct_children_handles_no_matches(monkeypatch) -> None:
+    # pgrep returns rc=1 with empty stdout when there are no children.
+    import stoiquent.skills.mcp_bridge as bridge_mod
+    import types
+
+    def _fake_run(*_args, **_kwargs):
+        return types.SimpleNamespace(returncode=1, stdout="", stderr="")
+
+    monkeypatch.setattr(bridge_mod.subprocess, "run", _fake_run)
+    assert bridge_mod._direct_children() == set()
+
+
+def test_direct_children_parses_pgrep_output(monkeypatch) -> None:
+    import stoiquent.skills.mcp_bridge as bridge_mod
+    import types
+
+    def _fake_run(*_args, **_kwargs):
+        return types.SimpleNamespace(returncode=0, stdout="123\n456\n", stderr="")
+
+    monkeypatch.setattr(bridge_mod.subprocess, "run", _fake_run)
+    assert bridge_mod._direct_children() == {123, 456}
+
+
+@pytest.mark.asyncio
+async def test_stop_server_logs_aclose_exception_at_error(monkeypatch, caplog) -> None:
+    bridge = MCPBridge()
+    sid = await bridge.start_server(
+        MCPServerDef(command=sys.executable, args=[ECHO_SERVER])
+    )
+
+    async def _raising_aclose() -> None:
+        raise RuntimeError("simulated aclose failure")
+
+    monkeypatch.setattr(bridge._servers[sid].exit_stack, "aclose", _raising_aclose)
+    with caplog.at_level("ERROR", logger="stoiquent.skills.mcp_bridge"):
+        await bridge.stop_server(sid)
+    # R2's narrowed exception split must surface real teardown failures at
+    # ERROR with traceback, not bury them at DEBUG.
+    assert any(
+        "cleanup failed" in r.message and r.levelname == "ERROR"
+        for r in caplog.records
+    ), f"expected ERROR log; got {[(r.levelname, r.message) for r in caplog.records]}"
+    assert bridge.server_ids == []
+
+
+@pytest.mark.asyncio
+async def test_stop_server_logs_aclose_cancelled_at_debug(monkeypatch, caplog) -> None:
+    bridge = MCPBridge()
+    sid = await bridge.start_server(
+        MCPServerDef(command=sys.executable, args=[ECHO_SERVER])
+    )
+
+    import asyncio as _asyncio
+
+    async def _cancelled_aclose() -> None:
+        raise _asyncio.CancelledError()
+
+    monkeypatch.setattr(bridge._servers[sid].exit_stack, "aclose", _cancelled_aclose)
+    with caplog.at_level("DEBUG", logger="stoiquent.skills.mcp_bridge"):
+        await bridge.stop_server(sid)
+    assert any(
+        "cleanup cancelled" in r.message and r.levelname == "DEBUG"
+        for r in caplog.records
+    )
+    # No ERROR log: CancelledError is the expected, benign teardown signal.
+    assert not any(r.levelname == "ERROR" for r in caplog.records)
+    assert bridge.server_ids == []
 
 
 @pytest.mark.asyncio

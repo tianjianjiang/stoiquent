@@ -221,18 +221,19 @@ class MCPBridge:
                     "orphan reap skipped (wrapper command or pgrep unavailable).",
                     server_id, conn.server_def.command,
                 )
-            for pid in conn.pids:
-                try:
-                    if not await _reap_pgroup(pid):
-                        logger.warning(
-                            "MCPBridge server '%s' (command=%r) required SIGKILL fallback for pid=%d",
-                            server_id, conn.server_def.command, pid,
+            else:
+                for pid in conn.pids:
+                    try:
+                        if not await _reap_pgroup(pid):
+                            logger.warning(
+                                "MCPBridge server '%s' (command=%r) required SIGKILL fallback for pid=%d",
+                                server_id, conn.server_def.command, pid,
+                            )
+                    except Exception:
+                        logger.exception(
+                            "MCPBridge reap raised for server '%s' pid=%d",
+                            server_id, pid,
                         )
-                except Exception:
-                    logger.exception(
-                        "MCPBridge reap raised for server '%s' pid=%d",
-                        server_id, pid,
-                    )
 
     async def stop_all(self) -> None:
         for server_id in list(self._servers):
