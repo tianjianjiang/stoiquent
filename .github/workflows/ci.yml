@@ -28,13 +28,16 @@ jobs:
             --cov-report=term-missing
 
       - name: Run integration tests with coverage (append)
+        # Ollama-dependent tests (marked `ollama`) are excluded from CI —
+        # they need a local model and are non-deterministic. Run them
+        # manually with `pytest -m ollama` during local development.
         run: |
           uv run pytest tests/integration/ \
             --cov=stoiquent \
             --cov-config=pyproject.toml \
             --cov-append \
             --cov-report=term-missing \
-            -m integration
+            -m 'integration and not ollama'
 
       - name: Run E2E tests with coverage (headless Chrome)
         run: |

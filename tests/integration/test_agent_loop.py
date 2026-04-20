@@ -7,12 +7,14 @@ from stoiquent.agent.session import Session
 from stoiquent.llm.openai_compat import OpenAICompatProvider
 from stoiquent.models import StreamChunk
 
+from tests.conftest import async_noop
 from tests.integration.conftest import skip_no_model, skip_no_ollama
 
 
 @skip_no_ollama
 @skip_no_model
 @pytest.mark.integration
+@pytest.mark.ollama
 @pytest.mark.asyncio
 async def test_should_complete_full_round_trip(
     provider: OpenAICompatProvider,
@@ -38,6 +40,7 @@ async def test_should_complete_full_round_trip(
 @skip_no_ollama
 @skip_no_model
 @pytest.mark.integration
+@pytest.mark.ollama
 @pytest.mark.asyncio
 async def test_should_extract_reasoning_from_deepseek_r1(
     provider: OpenAICompatProvider,
@@ -45,10 +48,7 @@ async def test_should_extract_reasoning_from_deepseek_r1(
     """DeepSeek-R1 returns reasoning via 'reasoning' field in SSE delta."""
     session = Session(provider=provider)
 
-    async def on_chunk(_chunk: StreamChunk) -> None:
-        pass
-
-    await run_agent_loop(session, "What is 2+3? Think step by step.", on_chunk)
+    await run_agent_loop(session, "What is 2+3? Think step by step.", async_noop)
 
     assistant = session.messages[1]
     assert assistant.content is not None
@@ -60,6 +60,7 @@ async def test_should_extract_reasoning_from_deepseek_r1(
 @skip_no_ollama
 @skip_no_model
 @pytest.mark.integration
+@pytest.mark.ollama
 @pytest.mark.asyncio
 async def test_should_stream_content_and_reasoning_separately(
     provider: OpenAICompatProvider,
@@ -87,6 +88,7 @@ async def test_should_stream_content_and_reasoning_separately(
 @skip_no_ollama
 @skip_no_model
 @pytest.mark.integration
+@pytest.mark.ollama
 @pytest.mark.asyncio
 async def test_should_accumulate_multi_turn_history(
     provider: OpenAICompatProvider,
@@ -94,13 +96,10 @@ async def test_should_accumulate_multi_turn_history(
     """Two consecutive messages build up session history correctly."""
     session = Session(provider=provider)
 
-    async def noop(_chunk: StreamChunk) -> None:
-        pass
-
-    await run_agent_loop(session, "Say hello.", noop)
+    await run_agent_loop(session, "Say hello.", async_noop)
     assert len(session.messages) == 2
 
-    await run_agent_loop(session, "Say goodbye.", noop)
+    await run_agent_loop(session, "Say goodbye.", async_noop)
     assert len(session.messages) == 4
     assert session.messages[0].role == "user"
     assert session.messages[1].role == "assistant"
