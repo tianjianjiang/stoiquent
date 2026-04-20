@@ -207,11 +207,20 @@ class MCPBridge:
             await conn.exit_stack.aclose()
         except (KeyboardInterrupt, SystemExit):
             raise
-        except BaseException:
-            # anyio cancel scope CancelledError is expected when stopping
-            # multiple MCP servers in the same event loop task
-            logger.debug("MCP server cleanup for '%s' completed with suppressed error", server_id)
+        except asyncio.CancelledError:
+            # Expected when stopping multiple MCP servers in the same loop task
+            logger.debug("MCP server '%s' cleanup cancelled", server_id)
+        except Exception:
+            # Real teardown failure: don't bury at DEBUG; the reap below
+            # depends on aclose having released the subprocess FDs.
+            logger.exception("MCP server '%s' cleanup failed", server_id)
         finally:
+            if not conn.pids:
+                logger.debug(
+                    "MCPBridge server '%s' (command=%r) had no tracked PIDs; "
+                    "orphan reap skipped (wrapper command or pgrep unavailable).",
+                    server_id, conn.server_def.command,
+                )
             for pid in conn.pids:
                 try:
                     if not await _reap_pgroup(pid):

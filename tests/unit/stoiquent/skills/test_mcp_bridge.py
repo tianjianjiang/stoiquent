@@ -17,6 +17,17 @@ ECHO_SERVER = str(
 )
 
 
+@pytest.fixture(autouse=True)
+def _reset_pgrep_warning_flag():
+    # Module-global one-shot flag persists across the interpreter; resetting
+    # per test avoids cross-test coupling where the first failing test
+    # silences warnings for all later tests.
+    import stoiquent.skills.mcp_bridge as bridge_mod
+    bridge_mod._pgrep_unusable_warned = False
+    yield
+    bridge_mod._pgrep_unusable_warned = False
+
+
 @dataclass
 class FakeMCPTool:
     """Mimics the MCP SDK tool object shape without importing MCP types."""
@@ -278,6 +289,9 @@ async def test_bridge_start_stop_tight_loop_no_subprocess_or_fd_leak() -> None:
         bridge = MCPBridge()
         sid = await bridge.start_server(server_def)
         tracked = bridge._servers[sid].pids
+        # Loud failure if PID tracking ever silently degrades to set();
+        # otherwise the leak-detection assertion would vacuously pass.
+        assert tracked, "bridge did not capture spawned PIDs; reap path unverifiable"
         await bridge.stop_all()
         for pid in tracked:
             try:
