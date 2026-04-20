@@ -122,6 +122,30 @@ async def test_bridge_call_tool_evicts_dead_server(monkeypatch) -> None:
     assert "no longer available" in result
     assert sid not in bridge.server_ids, "dead server must be evicted from registry"
 
+    await bridge.stop_all()
+
+
+@pytest.mark.asyncio
+async def test_bridge_call_tool_keeps_live_server_on_generic_error(monkeypatch) -> None:
+    """Inverse of the dead-server eviction contract: generic tool errors
+    (schema validation, bad arguments, etc.) must NOT evict the server —
+    a single bad call shouldn't kill an otherwise-healthy connection."""
+    bridge = MCPBridge()
+    sid = await bridge.start_server(
+        MCPServerDef(command=sys.executable, args=[ECHO_SERVER])
+    )
+
+    async def _failing_call_tool(*_args, **_kwargs):
+        raise ValueError("bad arguments")
+
+    monkeypatch.setattr(bridge._servers[sid].session, "call_tool", _failing_call_tool)
+
+    result = await bridge.call_tool(sid, "echo", {"message": "hi"})
+    assert "failed" in result
+    assert sid in bridge.server_ids, "live server must NOT be evicted on generic tool errors"
+
+    await bridge.stop_all()
+
 
 @pytest.mark.asyncio
 async def test_bridge_call_tool_real_server() -> None:
