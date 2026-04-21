@@ -127,20 +127,37 @@ def test_save_sync_cleans_up_fd_on_os_write_failure(
     assert remaining == []
 
 
-def test_save_sync_over_corrupt_existing_file(tmp_path: Path) -> None:
-    """save_sync must recover when the target file is corrupt, not raise."""
+def test_save_sync_over_corrupt_existing_file(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """save_sync must recover when the target file is corrupt, not raise.
+
+    Silently overwriting a damaged on-disk record is an irreversible
+    data-loss event (created_at from the prior record is unrecoverable),
+    so save_sync MUST log the decision loudly — this is the only
+    breadcrumb a future operator has to explain a post-repair mismatch.
+    """
+    import logging as _logging
+
     store = _make_store(tmp_path)
     corrupt_path = tmp_path / "projects" / "proj1.json"
     corrupt_path.write_text("{not valid json", encoding="utf-8")
 
     sample = _sample_project()
-    store.save_sync(sample)
+    with caplog.at_level(_logging.WARNING, logger="stoiquent.projects"):
+        store.save_sync(sample)
 
     loaded = store.load("proj1")
     assert loaded is not None
     assert loaded.id == "proj1"
     # created_at is taken from the caller (not carried over from corrupt file).
     assert loaded.created_at == sample.created_at
+    # Loud warning that names the data-loss consequence.
+    assert any(
+        "damaged on-disk copy" in r.message
+        and "created_at from the prior record cannot be recovered" in r.message
+        for r in caplog.records
+    ), "expected WARNING log naming the data-loss consequence"
 
 
 def test_save_sync_regenerates_created_at_when_existing_fails_schema(
@@ -241,6 +258,22 @@ def test_load_raises_on_os_error(
     monkeypatch.setattr(Path, "read_text", _raise)
     with pytest.raises(ProjectLoadError):
         store.load("proj1")
+
+
+def test_load_classifies_toctou_delete_as_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If the file disappears between exists() and read_text(), classify
+    as 'not found' rather than raising ProjectLoadError — matches the
+    exists()-was-false case, avoids spurious 'damaged' toasts on a race."""
+    store = _make_store(tmp_path)
+    store.save_sync(_sample_project())
+
+    def _raise_not_found(self: Path, *args: object, **kwargs: object) -> str:
+        raise FileNotFoundError(2, "No such file or directory")
+
+    monkeypatch.setattr(Path, "read_text", _raise_not_found)
+    assert store.load("proj1") is None
 
 
 # --- ProjectStore: list_projects ---

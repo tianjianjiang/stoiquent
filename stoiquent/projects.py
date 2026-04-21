@@ -113,8 +113,16 @@ class ProjectStore:
             try:
                 existing = self.load(project.id)
             except ProjectLoadError:
-                # Existing file is unreadable / corrupt; overwrite with
-                # caller's created_at rather than refusing to save.
+                # Existing file is damaged; we will overwrite it rather than
+                # refuse to save. Log loudly because the caller's
+                # created_at wins, destroying whatever the damaged file
+                # held — this is the one place that decision is made.
+                logger.warning(
+                    "Project %s has a damaged on-disk copy; save_sync will "
+                    "overwrite it. created_at from the prior record cannot "
+                    "be recovered.",
+                    project.id,
+                )
                 existing = None
             if existing is not None:
                 project = project.model_copy(
@@ -208,6 +216,10 @@ class ProjectStore:
         try:
             data = path.read_text(encoding="utf-8")
             return ProjectRecord.model_validate_json(data)
+        except FileNotFoundError:
+            # Race: file was deleted between exists() and read_text().
+            # Classify as "not found", matching the exists()-was-false case.
+            return None
         except (json.JSONDecodeError, OSError, ValueError) as e:
             logger.warning(
                 "Failed to load project %s", project_id, exc_info=True
@@ -262,14 +274,7 @@ class ProjectStore:
         return await asyncio.to_thread(self.list_projects)
 
     def delete(self, project_id: str) -> ProjectDeleteResult:
-        """Delete a project file.
-
-        Returns `DELETED` when the file was removed, `ALREADY_GONE` when
-        it was already missing (desired-state-met; safe to ignore), or
-        `FAILED` on a real I/O failure. This lets callers silently
-        succeed on race-with-concurrent-delete and notify only on
-        genuine failures.
-        """
+        """Delete a project file. See `ProjectDeleteResult` for the three outcomes."""
         path = self._path_for(project_id)
         try:
             path.unlink()

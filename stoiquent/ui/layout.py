@@ -72,9 +72,13 @@ def _load_project_instructions(
     the project is missing, or its file is damaged.
 
     `ProjectStore.load` returns `None` for genuine absence and raises
-    `ProjectLoadError` for corrupt/IO failures; both route to `""` here so
-    a session switch is never blocked by a faulty project record. Any
-    other exception is a contract violation and is logged at ERROR.
+    `ProjectLoadError` for corrupt/IO failures. `ProjectLoadError` is
+    logged at WARNING, surfaced to the user via `ui.notify` (so they
+    don't silently get an effectively-projectless session), and absorbed
+    (returns `""`) so the session switch is never blocked. Any other
+    exception is a contract violation: logged at ERROR with traceback,
+    absorbed (returns `""`); the user sees no toast because it indicates
+    a bug rather than an actionable data-damage condition.
     """
     from stoiquent.projects import ProjectLoadError
 
@@ -86,6 +90,10 @@ def _load_project_instructions(
         logger.warning(
             "Project %s exists but could not be loaded; using empty instructions",
             project_id,
+        )
+        ui.notify(
+            "Project instructions unavailable — project file is damaged",
+            type="warning",
         )
         return ""
     except Exception:

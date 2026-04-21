@@ -283,6 +283,12 @@ class Sidebar:
         except ProjectLoadError:
             ui.notify("Project data is damaged — see logs", type="warning")
             return
+        except Exception:
+            logger.exception(
+                "Unexpected failure opening edit dialog for %s", project_id
+            )
+            ui.notify("Could not open edit dialog — see logs", type="warning")
+            return
         if record is None:
             ui.notify("Project not found", type="warning")
             return
@@ -347,6 +353,12 @@ class Sidebar:
             record = await self._project_store.load_async(project_id)
         except ProjectLoadError:
             ui.notify("Project data is damaged — see logs", type="warning")
+            return
+        except Exception:
+            logger.exception(
+                "Unexpected failure opening delete dialog for %s", project_id
+            )
+            ui.notify("Could not open delete dialog — see logs", type="warning")
             return
         if record is None:
             ui.notify("Project not found", type="warning")
@@ -455,8 +467,17 @@ class Sidebar:
             await self._refresh_projects()
             await self._refresh_sessions()
             return
-        # DELETED = file was removed; ALREADY_GONE = idempotent success
-        # (race with concurrent delete). Both proceed to clear active state.
+        if delete_result is ProjectDeleteResult.ALREADY_GONE:
+            # Breadcrumb for the "bug vs benign race" case: this app is
+            # single-process, so ALREADY_GONE usually means an external
+            # edit, a phantom sidebar entry, or a cascade-logic bug.
+            logger.info(
+                "Project %s was already gone at delete time "
+                "(external edit, stale sidebar cache, or duplicate call)",
+                project_id,
+            )
+        # Fall-through: both DELETED and ALREADY_GONE are desired-state-met,
+        # so clear active state in either case.
         if self._active_project_id == project_id:
             self._active_project_id = None
         if self._session.project_id == project_id:

@@ -914,6 +914,112 @@ async def test_delete_project_handles_record_delete_failure(
 
 
 @pytest.mark.asyncio
+async def test_delete_project_clears_active_state_on_already_gone(
+    user: User, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Tri-state contract: ALREADY_GONE is desired-state-met; active state
+    must still clear (race-with-concurrent-delete or phantom entry).
+    Regression guard — a 'simplification' of the FAILED check to
+    `is not DELETED` would silently collapse ALREADY_GONE into FAILED."""
+    session = Session(provider=FakeProvider())
+    session.project_id = "p1"
+    session.project_instructions = "x"
+    store = make_store(tmp_path)
+    project_store = make_project_store(tmp_path)
+    project_store.save_sync(
+        ProjectRecord(id="p1", name="Alpha", folder="/tmp/a", instructions="")
+    )
+    project_store.delete = Mock(return_value=ProjectDeleteResult.ALREADY_GONE)
+
+    sidebar_ref: list[Sidebar] = []
+
+    @ui.page("/test-delete-already-gone")
+    async def page() -> None:
+        s = Sidebar(session, store, lambda *_: None, project_store)
+        s._active_project_id = "p1"
+        sidebar_ref.append(s)
+        await s.render()
+
+    await user.open("/test-delete-already-gone")
+    with patch("stoiquent.ui.sidebar.ui.notify") as mock_notify:
+        with caplog.at_level(logging.INFO, logger="stoiquent.ui.sidebar"):
+            await sidebar_ref[0]._delete_project("p1")
+
+    mock_notify.assert_not_called()
+    assert sidebar_ref[0]._active_project_id is None
+    assert session.project_id is None
+    assert session.project_instructions == ""
+    assert any(
+        "already gone at delete time" in r.message and r.levelname == "INFO"
+        for r in caplog.records
+    ), "expected INFO breadcrumb for ALREADY_GONE"
+
+
+@pytest.mark.asyncio
+async def test_edit_dialog_notifies_on_unexpected_load_exception(
+    user: User, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Generic exceptions (not ProjectLoadError) escaping load_async
+    must still reach the user, not silently abort the dialog."""
+    session = Session(provider=FakeProvider())
+    store = make_store(tmp_path)
+    project_store = make_project_store(tmp_path)
+
+    async def _raise(project_id: str) -> None:
+        raise RuntimeError(f"unexpected for {project_id}")
+
+    project_store.load_async = _raise  # type: ignore[method-assign]
+
+    sidebar_ref: list[Sidebar] = []
+
+    @ui.page("/test-edit-unexpected")
+    async def page() -> None:
+        s = Sidebar(session, store, lambda *_: None, project_store)
+        sidebar_ref.append(s)
+        await s.render()
+
+    await user.open("/test-edit-unexpected")
+    with caplog.at_level(logging.ERROR, logger="stoiquent.ui.sidebar"):
+        with patch("stoiquent.ui.sidebar.ui.notify") as mock_notify:
+            await sidebar_ref[0]._open_edit_project_dialog("any")
+    mock_notify.assert_called_once_with(
+        "Could not open edit dialog — see logs", type="warning"
+    )
+    caplog.clear()
+
+
+@pytest.mark.asyncio
+async def test_delete_dialog_notifies_on_unexpected_load_exception(
+    user: User, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    session = Session(provider=FakeProvider())
+    store = make_store(tmp_path)
+    project_store = make_project_store(tmp_path)
+
+    async def _raise(project_id: str) -> None:
+        raise RuntimeError(f"unexpected for {project_id}")
+
+    project_store.load_async = _raise  # type: ignore[method-assign]
+
+    sidebar_ref: list[Sidebar] = []
+
+    @ui.page("/test-delete-unexpected")
+    async def page() -> None:
+        s = Sidebar(session, store, lambda *_: None, project_store)
+        sidebar_ref.append(s)
+        await s.render()
+
+    await user.open("/test-delete-unexpected")
+    with caplog.at_level(logging.ERROR, logger="stoiquent.ui.sidebar"):
+        with patch("stoiquent.ui.sidebar.ui.notify") as mock_notify:
+            await sidebar_ref[0]._open_delete_project_dialog("any")
+    mock_notify.assert_called_once_with(
+        "Could not open delete dialog — see logs", type="warning"
+    )
+    caplog.clear()
+
+
+@pytest.mark.asyncio
 async def test_set_active_project_changes_state_and_refreshes(
     user: User, tmp_path: Path
 ) -> None:
@@ -1270,11 +1376,11 @@ async def test_delete_dialog_notifies_when_project_damaged(
 async def test_count_conversations_returns_zero_when_no_conversation_store(
     user: User, tmp_path: Path
 ) -> None:
-    """Item 15 contract lock: no conversation store means 0 conversations
+    """Contract lock: no conversation store means 0 conversations
     definitively, not 'unknown'. Distinguishes the no-store case (render
     'will also delete 0') from the read-failure case (render 'count
-    unavailable'). See test_count_conversations_handles_exception for the
-    None-return counterpart."""
+    unavailable'). See `test_count_conversations_handles_exception` for
+    the None-return counterpart."""
     session = Session(provider=FakeProvider())
     project_store = make_project_store(tmp_path)
 
