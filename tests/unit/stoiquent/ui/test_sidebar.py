@@ -915,13 +915,18 @@ async def test_delete_project_handles_record_delete_failure(
 
 @pytest.mark.asyncio
 async def test_delete_project_clears_active_state_on_already_gone(
-    user: User, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    user: User, tmp_path: Path
 ) -> None:
     """Tri-state contract: ALREADY_GONE is desired-state-met; active state
     must still clear (race-with-concurrent-delete or phantom entry).
     Regression guard — a 'simplification' of the FAILED check to
     `is not DELETED` would incorrectly surface a failure toast AND skip
-    the active-state clear for a desired-state-met outcome."""
+    the active-state clear for a desired-state-met outcome.
+
+    The INFO breadcrumb for ALREADY_GONE is owned by ProjectStore.delete
+    (not the sidebar), and is locked by
+    test_delete_logs_breadcrumb_on_already_gone in test_projects.py —
+    so this test no longer needs caplog."""
     session = Session(provider=FakeProvider())
     session.project_id = "p1"
     session.project_instructions = "x"
@@ -949,10 +954,6 @@ async def test_delete_project_clears_active_state_on_already_gone(
     assert sidebar_ref[0]._active_project_id is None
     assert session.project_id is None
     assert session.project_instructions == ""
-    # The INFO breadcrumb is now owned by ProjectStore.delete itself
-    # (so every caller benefits, not just the sidebar) — its presence is
-    # locked by test_delete_logs_breadcrumb_on_already_gone in test_projects.py.
-    _ = caplog
 
 
 @pytest.mark.asyncio
