@@ -29,9 +29,14 @@ class ProjectLoadError(Exception):
 class ProjectDeleteResult(enum.Enum):
     """Tri-state outcome of `ProjectStore.delete`.
 
-    `ALREADY_GONE` is desired-state-met (idempotent delete / race with
-    concurrent cleanup); callers can silently succeed. `FAILED` is a real
-    I/O failure and should notify the user.
+    - `DELETED`: the file was removed by this call.
+    - `ALREADY_GONE`: the file was absent when `delete` ran (idempotent
+      success; `ProjectStore.delete` itself logs an INFO breadcrumb
+      because in a single-process app this usually indicates a bug —
+      phantom sidebar entry, double-call, or cascade-logic issue —
+      rather than a genuine concurrent-delete race). Callers should
+      still treat this as success.
+    - `FAILED`: a real I/O failure; callers should notify the user.
     """
 
     DELETED = "deleted"
@@ -205,10 +210,17 @@ class ProjectStore:
     def load(self, project_id: str) -> ProjectRecord | None:
         """Load a project by ID.
 
-        Returns `None` only when the project file is genuinely absent.
-        Raises `ProjectLoadError` when the file exists but cannot be read
-        or parsed — callers should treat that as "data damaged, needs
-        repair", not "not found".
+        Returns `None` when the project file is absent — either never
+        existed, or was concurrently deleted during the load (race
+        between `exists()` and `read_text()`).
+
+        Raises:
+            ProjectLoadError: the file exists but cannot be read or
+                parsed (corrupt JSON, schema-invalid data, or I/O
+                failure). Callers should treat this as "data damaged,
+                needs repair", not "not found". Any other exception
+                indicates a bug and should not be caught as part of the
+                normal contract.
         """
         path = self._path_for(project_id)
         if not path.exists():
@@ -217,9 +229,19 @@ class ProjectStore:
             data = path.read_text(encoding="utf-8")
             return ProjectRecord.model_validate_json(data)
         except FileNotFoundError:
-            # Race: file was deleted between exists() and read_text().
-            # Classify as "not found", matching the exists()-was-false case.
+            # Race: file deleted between exists() and read_text().
+            # Classify as "not found" (matches exists()-was-false).
+            # INFO breadcrumb so concurrent-delete / cascade-race bugs
+            # are diagnosable, mirroring the ALREADY_GONE log in delete().
+            logger.info(
+                "Project %s vanished between exists() and read_text() "
+                "(external edit, stale sidebar cache, or cascade race)",
+                project_id,
+            )
             return None
+        # This block MUST remain below FileNotFoundError (which is an
+        # OSError subclass) or TOCTOU race deletes would misclassify as
+        # damaged. Guarded by test_load_classifies_toctou_delete_as_missing.
         except (json.JSONDecodeError, OSError, ValueError) as e:
             logger.warning(
                 "Failed to load project %s", project_id, exc_info=True
@@ -274,12 +296,23 @@ class ProjectStore:
         return await asyncio.to_thread(self.list_projects)
 
     def delete(self, project_id: str) -> ProjectDeleteResult:
-        """Delete a project file. See `ProjectDeleteResult` for the three outcomes."""
+        """Delete a project file. See `ProjectDeleteResult` for the three outcomes.
+
+        unlink success → DELETED; FileNotFoundError → ALREADY_GONE (with
+        INFO breadcrumb — single-process app, so this usually indicates a
+        phantom entry or cascade-logic bug); other OSError → FAILED.
+        """
         path = self._path_for(project_id)
         try:
             path.unlink()
             return ProjectDeleteResult.DELETED
         except FileNotFoundError:
+            logger.info(
+                "Project %s was already gone at delete time "
+                "(external edit, stale sidebar cache, concurrent double-click, "
+                "or cascade-logic bug)",
+                project_id,
+            )
             return ProjectDeleteResult.ALREADY_GONE
         except OSError:
             logger.warning(

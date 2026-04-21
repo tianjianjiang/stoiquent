@@ -79,6 +79,13 @@ def _load_project_instructions(
     exception is a contract violation: logged at ERROR with traceback,
     absorbed (returns `""`); the user sees no toast because it indicates
     a bug rather than an actionable data-damage condition.
+
+    Note on UX asymmetry with sidebar dialog openers (which toast on
+    both damaged and unexpected): dialogs can't proceed without a
+    record, so silent-on-bug would look like a dead button; session
+    switch falls through to a functional (if project-less) chat, so
+    adding a toast here would fire on every switch after a single bug
+    and drown real signal.
     """
     from stoiquent.projects import ProjectLoadError
 

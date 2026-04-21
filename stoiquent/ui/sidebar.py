@@ -467,17 +467,9 @@ class Sidebar:
             await self._refresh_projects()
             await self._refresh_sessions()
             return
-        if delete_result is ProjectDeleteResult.ALREADY_GONE:
-            # Breadcrumb for the "bug vs benign race" case: this app is
-            # single-process, so ALREADY_GONE usually means an external
-            # edit, a phantom sidebar entry, or a cascade-logic bug.
-            logger.info(
-                "Project %s was already gone at delete time "
-                "(external edit, stale sidebar cache, or duplicate call)",
-                project_id,
-            )
-        # Fall-through: both DELETED and ALREADY_GONE are desired-state-met,
-        # so clear active state in either case.
+        # Fall-through covers both DELETED and ALREADY_GONE:
+        # desired-state-met, so clear active state. (ProjectStore.delete
+        # logs the ALREADY_GONE breadcrumb for forensics.)
         if self._active_project_id == project_id:
             self._active_project_id = None
         if self._session.project_id == project_id:

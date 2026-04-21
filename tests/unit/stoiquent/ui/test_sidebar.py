@@ -920,7 +920,8 @@ async def test_delete_project_clears_active_state_on_already_gone(
     """Tri-state contract: ALREADY_GONE is desired-state-met; active state
     must still clear (race-with-concurrent-delete or phantom entry).
     Regression guard — a 'simplification' of the FAILED check to
-    `is not DELETED` would silently collapse ALREADY_GONE into FAILED."""
+    `is not DELETED` would incorrectly surface a failure toast AND skip
+    the active-state clear for a desired-state-met outcome."""
     session = Session(provider=FakeProvider())
     session.project_id = "p1"
     session.project_instructions = "x"
@@ -942,17 +943,16 @@ async def test_delete_project_clears_active_state_on_already_gone(
 
     await user.open("/test-delete-already-gone")
     with patch("stoiquent.ui.sidebar.ui.notify") as mock_notify:
-        with caplog.at_level(logging.INFO, logger="stoiquent.ui.sidebar"):
-            await sidebar_ref[0]._delete_project("p1")
+        await sidebar_ref[0]._delete_project("p1")
 
     mock_notify.assert_not_called()
     assert sidebar_ref[0]._active_project_id is None
     assert session.project_id is None
     assert session.project_instructions == ""
-    assert any(
-        "already gone at delete time" in r.message and r.levelname == "INFO"
-        for r in caplog.records
-    ), "expected INFO breadcrumb for ALREADY_GONE"
+    # The INFO breadcrumb is now owned by ProjectStore.delete itself
+    # (so every caller benefits, not just the sidebar) — its presence is
+    # locked by test_delete_logs_breadcrumb_on_already_gone in test_projects.py.
+    _ = caplog
 
 
 @pytest.mark.asyncio

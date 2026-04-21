@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from pathlib import Path
 from typing import Any
@@ -137,14 +138,12 @@ def test_save_sync_over_corrupt_existing_file(
     so save_sync MUST log the decision loudly — this is the only
     breadcrumb a future operator has to explain a post-repair mismatch.
     """
-    import logging as _logging
-
     store = _make_store(tmp_path)
     corrupt_path = tmp_path / "projects" / "proj1.json"
     corrupt_path.write_text("{not valid json", encoding="utf-8")
 
     sample = _sample_project()
-    with caplog.at_level(_logging.WARNING, logger="stoiquent.projects"):
+    with caplog.at_level(logging.WARNING, logger="stoiquent.projects"):
         store.save_sync(sample)
 
     loaded = store.load("proj1")
@@ -263,9 +262,16 @@ def test_load_raises_on_os_error(
 def test_load_classifies_toctou_delete_as_missing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """If the file disappears between exists() and read_text(), classify
-    as 'not found' rather than raising ProjectLoadError — matches the
-    exists()-was-false case, avoids spurious 'damaged' toasts on a race."""
+    """If `read_text` raises FileNotFoundError (e.g. TOCTOU delete
+    between exists() and read_text()), classify as 'not found' rather
+    than raising ProjectLoadError — matches the exists()-was-false
+    case, avoids spurious 'damaged' toasts on a race.
+
+    Also locks except-ordering: FileNotFoundError is an OSError
+    subclass, so if a future refactor swaps the except blocks, this
+    test's PermissionError-via-monkeypatch counterpart
+    (test_load_raises_on_os_error) would pass, but THIS test would
+    fail — making the ordering dependency observable."""
     store = _make_store(tmp_path)
     store.save_sync(_sample_project())
 
@@ -369,6 +375,46 @@ def test_delete_returns_already_gone_when_missing(tmp_path: Path) -> None:
     'already-gone' so callers can silently succeed on race-with-concurrent-delete."""
     store = _make_store(tmp_path)
     assert store.delete("nonexistent") is ProjectDeleteResult.ALREADY_GONE
+
+
+def test_delete_logs_breadcrumb_on_already_gone(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """ALREADY_GONE must emit an INFO breadcrumb — in this single-process
+    app it usually signals a bug (phantom entry, double-click, cascade
+    race), not a benign concurrent-delete. The log is owned by
+    ProjectStore.delete so every caller benefits."""
+    store = _make_store(tmp_path)
+    with caplog.at_level(logging.INFO, logger="stoiquent.projects"):
+        result = store.delete("nonexistent")
+    assert result is ProjectDeleteResult.ALREADY_GONE
+    assert any(
+        "already gone at delete time" in r.message and r.levelname == "INFO"
+        for r in caplog.records
+    ), "expected INFO breadcrumb for ALREADY_GONE"
+
+
+def test_load_logs_breadcrumb_on_toctou_delete(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Symmetric with ALREADY_GONE: TOCTOU delete during load emits INFO
+    so cascade-race bugs are diagnosable, not silently shrugged."""
+    store = _make_store(tmp_path)
+    store.save_sync(_sample_project())
+
+    def _raise_not_found(self: Path, *args: object, **kwargs: object) -> str:
+        raise FileNotFoundError(2, "No such file or directory")
+
+    monkeypatch.setattr(Path, "read_text", _raise_not_found)
+    with caplog.at_level(logging.INFO, logger="stoiquent.projects"):
+        result = store.load("proj1")
+    assert result is None
+    assert any(
+        "vanished between exists() and read_text()" in r.message
+        and r.levelname == "INFO"
+        for r in caplog.records
+    ), "expected INFO breadcrumb for TOCTOU"
 
 
 def test_delete_returns_failed_on_os_error(
