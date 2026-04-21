@@ -10,7 +10,7 @@ from nicegui.testing import User
 
 from stoiquent.agent.session import Session
 from stoiquent.models import Message
-from stoiquent.projects import ProjectRecord
+from stoiquent.projects import ProjectDeleteResult, ProjectRecord
 from stoiquent.skills.catalog import SkillCatalog
 from stoiquent.ui.sidebar import Sidebar
 from tests.conftest import (
@@ -896,7 +896,7 @@ async def test_delete_project_handles_record_delete_failure(
     project_store.save_sync(
         ProjectRecord(id="p1", name="Alpha", folder="/tmp/a", instructions="")
     )
-    project_store.delete = Mock(return_value=False)
+    project_store.delete = Mock(return_value=ProjectDeleteResult.FAILED)
 
     sidebar_ref: list[Sidebar] = []
 
@@ -1189,7 +1189,7 @@ async def test_edit_dialog_notifies_when_project_missing(
 
     await user.open("/test-edit-missing")
     with patch("stoiquent.ui.sidebar.ui.notify") as mock_notify:
-        sidebar_ref[0]._open_edit_project_dialog("missing")
+        await sidebar_ref[0]._open_edit_project_dialog("missing")
     mock_notify.assert_called_once_with("Project not found", type="warning")
 
 
@@ -1211,8 +1211,84 @@ async def test_delete_dialog_notifies_when_project_missing(
 
     await user.open("/test-delete-missing")
     with patch("stoiquent.ui.sidebar.ui.notify") as mock_notify:
-        sidebar_ref[0]._open_delete_project_dialog("missing")
+        await sidebar_ref[0]._open_delete_project_dialog("missing")
     mock_notify.assert_called_once_with("Project not found", type="warning")
+
+
+@pytest.mark.asyncio
+async def test_edit_dialog_notifies_when_project_damaged(
+    user: User, tmp_path: Path
+) -> None:
+    """Tri-state contract: a corrupt project file is 'damaged', not 'not found'."""
+    session = Session(provider=FakeProvider())
+    store = make_store(tmp_path)
+    project_store = make_project_store(tmp_path)
+    (tmp_path / "projects" / "bad.json").write_text("{corrupt", encoding="utf-8")
+
+    sidebar_ref: list[Sidebar] = []
+
+    @ui.page("/test-edit-damaged")
+    async def page() -> None:
+        s = Sidebar(session, store, lambda *_: None, project_store)
+        sidebar_ref.append(s)
+        await s.render()
+
+    await user.open("/test-edit-damaged")
+    with patch("stoiquent.ui.sidebar.ui.notify") as mock_notify:
+        await sidebar_ref[0]._open_edit_project_dialog("bad")
+    mock_notify.assert_called_once_with(
+        "Project data is damaged — see logs", type="warning"
+    )
+
+
+@pytest.mark.asyncio
+async def test_delete_dialog_notifies_when_project_damaged(
+    user: User, tmp_path: Path
+) -> None:
+    session = Session(provider=FakeProvider())
+    store = make_store(tmp_path)
+    project_store = make_project_store(tmp_path)
+    (tmp_path / "projects" / "bad.json").write_text("{corrupt", encoding="utf-8")
+
+    sidebar_ref: list[Sidebar] = []
+
+    @ui.page("/test-delete-damaged")
+    async def page() -> None:
+        s = Sidebar(session, store, lambda *_: None, project_store)
+        sidebar_ref.append(s)
+        await s.render()
+
+    await user.open("/test-delete-damaged")
+    with patch("stoiquent.ui.sidebar.ui.notify") as mock_notify:
+        await sidebar_ref[0]._open_delete_project_dialog("bad")
+    mock_notify.assert_called_once_with(
+        "Project data is damaged — see logs", type="warning"
+    )
+
+
+@pytest.mark.asyncio
+async def test_count_conversations_returns_zero_when_no_conversation_store(
+    user: User, tmp_path: Path
+) -> None:
+    """Item 15 contract lock: no conversation store means 0 conversations
+    definitively, not 'unknown'. Distinguishes the no-store case (render
+    'will also delete 0') from the read-failure case (render 'count
+    unavailable'). See test_count_conversations_handles_exception for the
+    None-return counterpart."""
+    session = Session(provider=FakeProvider())
+    project_store = make_project_store(tmp_path)
+
+    sidebar_ref: list[Sidebar] = []
+
+    @ui.page("/test-count-no-store")
+    async def page() -> None:
+        s = Sidebar(session, store=None, on_session_switch=lambda *_: None,
+                    project_store=project_store)
+        sidebar_ref.append(s)
+        await s.render()
+
+    await user.open("/test-count-no-store")
+    assert sidebar_ref[0]._count_conversations_for_project("p1") == 0
 
 
 @pytest.mark.asyncio
@@ -1257,7 +1333,7 @@ async def test_delete_dialog_renders_unknown_count_on_read_failure(
     async def page() -> None:
         s = Sidebar(session, store, lambda *_: None, project_store)
         await s.render()
-        s._open_delete_project_dialog("p1")
+        await s._open_delete_project_dialog("p1")
 
     await user.open("/test-delete-unknown-count")
     await user.should_see("Could not determine how many conversations")
@@ -1298,7 +1374,7 @@ async def test_open_edit_project_dialog_builds_form(
     async def page() -> None:
         s = Sidebar(session, store, lambda *_: None, project_store)
         await s.render()
-        s._open_edit_project_dialog("p1")
+        await s._open_edit_project_dialog("p1")
 
     await user.open("/test-edit-dialog-open")
     await user.should_see("Edit Project")
@@ -1320,7 +1396,7 @@ async def test_open_delete_project_dialog_builds_form(
     async def page() -> None:
         s = Sidebar(session, store, lambda *_: None, project_store)
         await s.render()
-        s._open_delete_project_dialog("p1")
+        await s._open_delete_project_dialog("p1")
 
     await user.open("/test-delete-dialog-open")
     await user.should_see("Delete 'Alpha'?")
@@ -1344,7 +1420,7 @@ async def test_open_delete_project_dialog_pluralizes(
     async def page() -> None:
         s = Sidebar(session, store, lambda *_: None, project_store)
         await s.render()
-        s._open_delete_project_dialog("p1")
+        await s._open_delete_project_dialog("p1")
 
     await user.open("/test-delete-dialog-plural")
     await user.should_see("This will also delete 2 conversations.")
@@ -1388,8 +1464,8 @@ async def test_edit_and_delete_dialogs_skip_without_store(
 
     await user.open("/test-edit-delete-no-store")
     # Neither call should raise.
-    sidebar_ref[0]._open_edit_project_dialog("any")
-    sidebar_ref[0]._open_delete_project_dialog("any")
+    await sidebar_ref[0]._open_edit_project_dialog("any")
+    await sidebar_ref[0]._open_delete_project_dialog("any")
     await sidebar_ref[0]._create_project("a", "/b", "")
     await sidebar_ref[0]._update_project(
         ProjectRecord(id="x", name="n", folder="/f", instructions=""),

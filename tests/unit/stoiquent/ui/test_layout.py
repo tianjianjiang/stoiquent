@@ -222,6 +222,37 @@ def test_load_project_instructions_swallows_load_exception(
     )
 
 
+def test_load_project_instructions_returns_empty_on_damaged_file(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Tri-state load contract: ProjectLoadError is 'damaged' — logged at
+    WARNING, not buried at ERROR as 'unexpected failure'."""
+    import logging as _logging
+
+    from stoiquent.projects import ProjectLoadError
+
+    store = ProjectStore(PersistenceConfig(data_dir=str(tmp_path)))
+    store.ensure_dirs()
+    (tmp_path / "projects" / "proj1.json").write_text("{corrupt", encoding="utf-8")
+
+    with caplog.at_level(_logging.WARNING, logger="stoiquent.ui.layout"):
+        result = _load_project_instructions(store, "proj1")
+
+    assert result == ""
+    # Surfaces at WARNING with identifying context, not ERROR.
+    warning_records = [
+        r for r in caplog.records
+        if r.levelname == "WARNING" and "proj1" in r.message
+    ]
+    assert warning_records, "expected a WARNING log about proj1"
+    assert not any(r.levelname == "ERROR" for r in caplog.records)
+    # Sanity: the raise path is the one tripped.
+    store.ensure_dirs()
+    with pytest.raises(ProjectLoadError):
+        store.load("proj1")
+
+
 # --- _apply_session_switch ---
 
 

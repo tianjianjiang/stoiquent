@@ -8,7 +8,13 @@ from typing import Any
 import pytest
 
 from stoiquent.models import PersistenceConfig
-from stoiquent.projects import ProjectRecord, ProjectStore, ProjectSummary
+from stoiquent.projects import (
+    ProjectDeleteResult,
+    ProjectLoadError,
+    ProjectRecord,
+    ProjectStore,
+    ProjectSummary,
+)
 
 
 def _make_store(tmp_path: Path) -> ProjectStore:
@@ -200,12 +206,41 @@ def test_load_returns_none_for_missing_id(tmp_path: Path) -> None:
     assert store.load("nonexistent") is None
 
 
-def test_load_returns_none_for_corrupt_json(tmp_path: Path) -> None:
+def test_load_raises_on_corrupt_json(tmp_path: Path) -> None:
+    """Tri-state contract: corrupt file is 'damaged', not 'missing'.
+
+    Callers rendering 'Project not found' on a corrupt file would mislead
+    users into deleting and re-creating data they could otherwise repair.
+    """
     store = _make_store(tmp_path)
     corrupt_path = tmp_path / "projects" / "bad.json"
     corrupt_path.write_text("{invalid json", encoding="utf-8")
 
-    assert store.load("bad") is None
+    with pytest.raises(ProjectLoadError):
+        store.load("bad")
+
+
+def test_load_raises_on_schema_invalid_json(tmp_path: Path) -> None:
+    store = _make_store(tmp_path)
+    invalid_path = tmp_path / "projects" / "invalid.json"
+    invalid_path.write_text('{"id": "invalid"}', encoding="utf-8")  # missing required fields
+
+    with pytest.raises(ProjectLoadError):
+        store.load("invalid")
+
+
+def test_load_raises_on_os_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = _make_store(tmp_path)
+    store.save_sync(_sample_project())
+
+    def _raise(self: Path, *args: object, **kwargs: object) -> str:
+        raise PermissionError("simulated read denied")
+
+    monkeypatch.setattr(Path, "read_text", _raise)
+    with pytest.raises(ProjectLoadError):
+        store.load("proj1")
 
 
 # --- ProjectStore: list_projects ---
@@ -288,23 +323,24 @@ def test_list_projects_skips_id_filename_mismatch(tmp_path: Path) -> None:
 # --- ProjectStore: delete ---
 
 
-def test_delete_removes_file(tmp_path: Path) -> None:
+def test_delete_returns_deleted_when_file_removed(tmp_path: Path) -> None:
     store = _make_store(tmp_path)
     store.save_sync(_sample_project())
 
-    assert store.delete("proj1") is True
+    assert store.delete("proj1") is ProjectDeleteResult.DELETED
     assert not (tmp_path / "projects" / "proj1.json").exists()
 
 
-def test_delete_returns_false_for_missing(tmp_path: Path) -> None:
+def test_delete_returns_already_gone_when_missing(tmp_path: Path) -> None:
+    """Tri-state contract: idempotent delete distinguishes 'was-removed' from
+    'already-gone' so callers can silently succeed on race-with-concurrent-delete."""
     store = _make_store(tmp_path)
-    assert store.delete("nonexistent") is False
+    assert store.delete("nonexistent") is ProjectDeleteResult.ALREADY_GONE
 
 
-def test_delete_returns_false_on_os_error(
+def test_delete_returns_failed_on_os_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """delete must swallow non-FileNotFoundError OSError and return False."""
     store = _make_store(tmp_path)
     store.save_sync(_sample_project())
 
@@ -313,7 +349,7 @@ def test_delete_returns_false_on_os_error(
 
     monkeypatch.setattr(Path, "unlink", _raise)
 
-    assert store.delete("proj1") is False
+    assert store.delete("proj1") is ProjectDeleteResult.FAILED
 
 
 # --- ProjectStore: path traversal ---

@@ -11,7 +11,7 @@ from pydantic import ValidationError
 
 from stoiquent.agent.session import Session
 from stoiquent.models import Message
-from stoiquent.projects import ProjectRecord
+from stoiquent.projects import ProjectDeleteResult, ProjectLoadError, ProjectRecord
 
 if TYPE_CHECKING:
     from stoiquent.persistence import ConversationStore, ConversationSummary
@@ -275,10 +275,14 @@ class Sidebar:
             return
         await self._refresh_projects()
 
-    def _open_edit_project_dialog(self, project_id: str) -> None:
+    async def _open_edit_project_dialog(self, project_id: str) -> None:
         if self._project_store is None:
             return
-        record = self._project_store.load(project_id)
+        try:
+            record = await self._project_store.load_async(project_id)
+        except ProjectLoadError:
+            ui.notify("Project data is damaged — see logs", type="warning")
+            return
         if record is None:
             ui.notify("Project not found", type="warning")
             return
@@ -336,10 +340,14 @@ class Sidebar:
         await self._refresh_projects()
         await self._refresh_sessions()
 
-    def _open_delete_project_dialog(self, project_id: str) -> None:
+    async def _open_delete_project_dialog(self, project_id: str) -> None:
         if self._project_store is None:
             return
-        record = self._project_store.load(project_id)
+        try:
+            record = await self._project_store.load_async(project_id)
+        except ProjectLoadError:
+            ui.notify("Project data is damaged — see logs", type="warning")
+            return
         if record is None:
             ui.notify("Project not found", type="warning")
             return
@@ -441,11 +449,14 @@ class Sidebar:
                 await self._refresh_projects()
                 await self._refresh_sessions()
                 return
-        if not self._project_store.delete(project_id):
+        delete_result = self._project_store.delete(project_id)
+        if delete_result is ProjectDeleteResult.FAILED:
             ui.notify("Failed to delete project", type="warning")
             await self._refresh_projects()
             await self._refresh_sessions()
             return
+        # DELETED = file was removed; ALREADY_GONE = idempotent success
+        # (race with concurrent delete). Both proceed to clear active state.
         if self._active_project_id == project_id:
             self._active_project_id = None
         if self._session.project_id == project_id:
