@@ -12,7 +12,7 @@ from stoiquent.agent.session import Session
 from stoiquent.models import Message
 from stoiquent.projects import ProjectDeleteResult, ProjectRecord
 from stoiquent.skills.catalog import SkillCatalog
-from stoiquent.ui.sidebar import Sidebar
+from stoiquent.ui.sidebar import SessionSwitch, Sidebar
 from tests.conftest import (
     FakeProvider,
     make_project_store,
@@ -130,8 +130,8 @@ async def test_new_session_calls_callback(
     session.messages = [Message(role="user", content="Old message")]
     received: list[tuple[str, list]] = []
 
-    def on_switch(new_id: str, new_messages: list[Message], new_project_id: str | None) -> None:
-        received.append((new_id, new_messages))
+    def on_switch(switch: SessionSwitch) -> None:
+        received.append((switch.session_id, switch.messages))
 
     sidebar_ref: list[Sidebar] = []
 
@@ -158,8 +158,8 @@ async def test_load_session_calls_callback(
     session = Session(provider=FakeProvider())
     received: list[tuple[str, list]] = []
 
-    def on_switch(new_id: str, new_messages: list[Message], new_project_id: str | None) -> None:
-        received.append((new_id, new_messages))
+    def on_switch(switch: SessionSwitch) -> None:
+        received.append((switch.session_id, switch.messages))
 
     sidebar_ref: list[Sidebar] = []
 
@@ -186,8 +186,8 @@ async def test_load_nonexistent_session_does_not_switch(
     original_id = session.id
     received: list[tuple[str, list]] = []
 
-    def on_switch(new_id: str, new_messages: list[Message], new_project_id: str | None) -> None:
-        received.append((new_id, new_messages))
+    def on_switch(switch: SessionSwitch) -> None:
+        received.append((switch.session_id, switch.messages))
 
     sidebar_ref: list[Sidebar] = []
 
@@ -285,8 +285,8 @@ async def test_load_session_handles_exception(
     session = Session(provider=FakeProvider())
     received: list[tuple[str, list]] = []
 
-    def on_switch(new_id: str, new_messages: list[Message], new_project_id: str | None) -> None:
-        received.append((new_id, new_messages))
+    def on_switch(switch: SessionSwitch) -> None:
+        received.append((switch.session_id, switch.messages))
 
     sidebar_ref: list[Sidebar] = []
 
@@ -348,8 +348,8 @@ async def test_load_session_saves_old_messages(
 
     received: list[tuple[str, list]] = []
 
-    def on_switch(new_id: str, new_messages: list[Message], new_project_id: str | None) -> None:
-        received.append((new_id, new_messages))
+    def on_switch(switch: SessionSwitch) -> None:
+        received.append((switch.session_id, switch.messages))
 
     sidebar_ref: list[Sidebar] = []
 
@@ -432,8 +432,8 @@ async def test_new_session_saves_old_messages(
 
     received: list[tuple[str, list]] = []
 
-    def on_switch(new_id: str, new_messages: list[Message], new_project_id: str | None) -> None:
-        received.append((new_id, new_messages))
+    def on_switch(switch: SessionSwitch) -> None:
+        received.append((switch.session_id, switch.messages))
 
     sidebar_ref: list[Sidebar] = []
 
@@ -587,6 +587,13 @@ async def test_create_project_handles_save_failure(
 async def test_update_project_saves_and_refreshes_active_session(
     user: User, tmp_path: Path
 ) -> None:
+    """Updating a project whose record matches the active session routes
+    the refresh through the session-switch callback (item 4: layout owns
+    the project_id/project_instructions invariant). Uses the real
+    `_apply_session_switch` so end-to-end refresh behavior is covered.
+    """
+    from stoiquent.ui.layout import _apply_session_switch
+
     session = Session(provider=FakeProvider())
     session.project_id = "p1"
     session.project_instructions = "old"
@@ -595,11 +602,14 @@ async def test_update_project_saves_and_refreshes_active_session(
     record = ProjectRecord(id="p1", name="Alpha", folder="/tmp/a", instructions="old")
     project_store.save_sync(record)
 
+    def on_switch(switch: SessionSwitch) -> None:
+        _apply_session_switch(session, project_store, switch)
+
     sidebar_ref: list[Sidebar] = []
 
     @ui.page("/test-update-project")
     async def page() -> None:
-        s = Sidebar(session, store, lambda *_: None, project_store)
+        s = Sidebar(session, store, on_switch, project_store)
         sidebar_ref.append(s)
         await s.render()
 
@@ -689,11 +699,16 @@ async def test_delete_project_cascades_conversations(
         ProjectRecord(id="p2", name="Beta", folder="/tmp/b", instructions="")
     )
 
+    switches: list[SessionSwitch] = []
+
+    def on_switch(switch: SessionSwitch) -> None:
+        switches.append(switch)
+
     sidebar_ref: list[Sidebar] = []
 
     @ui.page("/test-delete-cascade")
     async def page() -> None:
-        s = Sidebar(session, store, lambda *_: None, project_store)
+        s = Sidebar(session, store, on_switch, project_store)
         s._active_project_id = "p1"
         sidebar_ref.append(s)
         await s.render()
@@ -705,8 +720,11 @@ async def test_delete_project_cascades_conversations(
     assert project_store.load("p2") is not None
     remaining_ids = {s.id for s in store.list_conversations()}
     assert remaining_ids == {"c2"}
-    assert session.project_id is None
-    assert session.project_instructions == ""
+    # Session mutation is routed through the switch callback (layout owns
+    # project_id / project_instructions); the test observes the intent.
+    assert len(switches) == 1
+    assert switches[0].project_id is None
+    assert switches[0].session_id == session.id
     assert sidebar_ref[0]._active_project_id is None
 
 
@@ -934,11 +952,16 @@ async def test_delete_project_clears_active_state_on_already_gone(
     )
     project_store.delete = Mock(return_value=ProjectDeleteResult.ALREADY_GONE)
 
+    switches: list[SessionSwitch] = []
+
+    def on_switch(switch: SessionSwitch) -> None:
+        switches.append(switch)
+
     sidebar_ref: list[Sidebar] = []
 
     @ui.page("/test-delete-already-gone")
     async def page() -> None:
-        s = Sidebar(session, store, lambda *_: None, project_store)
+        s = Sidebar(session, store, on_switch, project_store)
         s._active_project_id = "p1"
         sidebar_ref.append(s)
         await s.render()
@@ -949,8 +972,12 @@ async def test_delete_project_clears_active_state_on_already_gone(
 
     mock_notify.assert_not_called()
     assert sidebar_ref[0]._active_project_id is None
-    assert session.project_id is None
-    assert session.project_instructions == ""
+    # session mutation is routed through the callback (layout owns the
+    # project_id/project_instructions invariant); the test observes the
+    # intent (SessionSwitch) rather than the mutation directly.
+    assert len(switches) == 1
+    assert switches[0].project_id is None
+    assert switches[0].session_id == session.id
 
 
 @pytest.mark.asyncio
@@ -1079,10 +1106,8 @@ async def test_new_session_with_no_active_project_passes_none(
 
     received: list[tuple[str, list, str | None]] = []
 
-    def on_switch(
-        new_id: str, new_messages: list[Message], new_project_id: str | None
-    ) -> None:
-        received.append((new_id, new_messages, new_project_id))
+    def on_switch(switch: SessionSwitch) -> None:
+        received.append((switch.session_id, switch.messages, switch.project_id))
 
     sidebar_ref: list[Sidebar] = []
 
@@ -1110,10 +1135,8 @@ async def test_new_session_inherits_active_project(
 
     received: list[tuple[str, list, str | None]] = []
 
-    def on_switch(
-        new_id: str, new_messages: list[Message], new_project_id: str | None
-    ) -> None:
-        received.append((new_id, new_messages, new_project_id))
+    def on_switch(switch: SessionSwitch) -> None:
+        received.append((switch.session_id, switch.messages, switch.project_id))
 
     sidebar_ref: list[Sidebar] = []
 

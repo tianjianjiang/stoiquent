@@ -19,6 +19,7 @@ from stoiquent.ui.layout import (
     _load_project_instructions,
     _switch_provider,
 )
+from stoiquent.ui.sidebar import SessionSwitch
 from tests.conftest import FakeProvider, make_project_store, two_provider_config
 
 
@@ -283,7 +284,13 @@ def test_apply_session_switch_clears_stale_project_instructions(
     session.project_instructions = "A-only guidance"
 
     _apply_session_switch(
-        session, None, "new_id", [Message(role="user", content="fresh")], None
+        session,
+        None,
+        SessionSwitch(
+            session_id="new_id",
+            messages=[Message(role="user", content="fresh")],
+            project_id=None,
+        ),
     )
 
     assert session.project_id is None
@@ -311,7 +318,11 @@ def test_apply_session_switch_loads_new_project_instructions(
     session.project_id = "projA"
     session.project_instructions = "A-only guidance"
 
-    _apply_session_switch(session, store, "sid", [], "projB")
+    _apply_session_switch(
+        session,
+        store,
+        SessionSwitch(session_id="sid", messages=[], project_id="projB"),
+    )
 
     assert session.project_id == "projB"
     assert session.project_instructions == "B-only guidance"

@@ -7,9 +7,8 @@ from typing import TYPE_CHECKING
 from nicegui import ui
 
 from stoiquent.agent.session import Session
-from stoiquent.models import Message
 from stoiquent.ui.chat import ChatPanel
-from stoiquent.ui.sidebar import Sidebar
+from stoiquent.ui.sidebar import Sidebar, SessionSwitch
 
 if TYPE_CHECKING:
     from stoiquent.models import AppConfig
@@ -28,12 +27,8 @@ async def render(
 ) -> None:
     chat = ChatPanel(session, store)
 
-    def on_session_switch(
-        new_id: str, new_messages: list[Message], new_project_id: str | None
-    ) -> None:
-        _apply_session_switch(
-            session, project_store, new_id, new_messages, new_project_id
-        )
+    def on_session_switch(switch: SessionSwitch) -> None:
+        _apply_session_switch(session, project_store, switch)
         chat.reload_messages()
 
     def on_provider_change(provider_name: str) -> None:
@@ -119,9 +114,7 @@ def _load_project_instructions(
 def _apply_session_switch(
     session: Session,
     project_store: ProjectStore | None,
-    new_id: str,
-    new_messages: list[Message],
-    new_project_id: str | None,
+    switch: SessionSwitch,
 ) -> None:
     """Update all session fields tied to the active conversation together.
 
@@ -131,10 +124,10 @@ def _apply_session_switch(
     before any field is mutated, so a future load-failure that surfaced
     as a raise would leave the session untouched.
     """
-    new_instructions = _load_project_instructions(project_store, new_project_id)
-    session.id = new_id
-    session.messages = new_messages
-    session.project_id = new_project_id
+    new_instructions = _load_project_instructions(project_store, switch.project_id)
+    session.id = switch.session_id
+    session.messages = switch.messages
+    session.project_id = switch.project_id
     session.project_instructions = new_instructions
 
 
