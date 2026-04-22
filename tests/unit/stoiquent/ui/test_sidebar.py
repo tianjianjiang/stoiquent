@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import logging
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
@@ -19,6 +20,35 @@ from tests.conftest import (
     make_skill,
     make_store,
 )
+
+
+# --- SessionSwitch type contract ---
+
+
+def test_session_switch_is_frozen() -> None:
+    """Locks item-3 invariant: a dispatched SessionSwitch can't be mutated
+    mid-apply. Removing `frozen=True` would let a receiver alter the
+    intent (e.g. flip project_id after instructions were resolved),
+    silently re-enabling exactly the class of bugs this dataclass blocks.
+    """
+    switch = SessionSwitch(session_id="s", messages=[], project_id=None)
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        switch.session_id = "hacked"  # type: ignore[misc]
+
+
+def test_session_switch_field_names_and_order_pinned() -> None:
+    """Pin the field order so a future refactor can't silently reintroduce
+    the positional `(str, list, str | None)` form by renaming/reordering.
+    """
+    fields = dataclasses.fields(SessionSwitch)
+    assert [f.name for f in fields] == ["session_id", "messages", "project_id"]
+
+
+def test_session_switch_rejects_empty_session_id() -> None:
+    """The only enforced field-level invariant — session_id must be
+    non-empty. Layout relies on this to keep session.id meaningful."""
+    with pytest.raises(ValueError, match="session_id must be non-empty"):
+        SessionSwitch(session_id="", messages=[], project_id=None)
 
 
 @pytest.mark.asyncio
@@ -942,6 +972,8 @@ async def test_delete_project_clears_active_state_on_already_gone(
     (not the sidebar), and is locked by
     test_delete_logs_breadcrumb_on_already_gone in test_projects.py —
     so this test no longer needs caplog."""
+    from stoiquent.ui.layout import _apply_session_switch
+
     session = Session(provider=FakeProvider())
     session.project_id = "p1"
     session.project_instructions = "x"
@@ -956,6 +988,10 @@ async def test_delete_project_clears_active_state_on_already_gone(
 
     def on_switch(switch: SessionSwitch) -> None:
         switches.append(switch)
+        # Wire the real resolver so the end-to-end side effect of item 4
+        # (routing mutations through layout's single source of truth) is
+        # also covered here, not only in test_layout.
+        _apply_session_switch(session, project_store, switch)
 
     sidebar_ref: list[Sidebar] = []
 
@@ -972,12 +1008,13 @@ async def test_delete_project_clears_active_state_on_already_gone(
 
     mock_notify.assert_not_called()
     assert sidebar_ref[0]._active_project_id is None
-    # session mutation is routed through the callback (layout owns the
-    # project_id/project_instructions invariant); the test observes the
-    # intent (SessionSwitch) rather than the mutation directly.
+    # Callback invoked with the correct intent…
     assert len(switches) == 1
     assert switches[0].project_id is None
     assert switches[0].session_id == session.id
+    # …and the real `_apply_session_switch` cleared session state end-to-end.
+    assert session.project_id is None
+    assert session.project_instructions == ""
 
 
 @pytest.mark.asyncio

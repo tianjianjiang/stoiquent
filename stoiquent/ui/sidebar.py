@@ -25,16 +25,26 @@ logger = logging.getLogger(__name__)
 class SessionSwitch:
     """Intent to move the active chat to a new session.
 
-    Passed to ``OnSessionSwitch`` so callers can't transpose the three
-    positional fields (pre-F3 the callback took ``(str, list, str | None)``
-    and two strings silently swapped would only surface as a stale chat
-    after the switch). ``messages`` is stored by reference; upstream should
-    copy if it needs a snapshot (the current callers hand it over wholesale).
+    Bundles the three fields ``_apply_session_switch`` needs so they can be
+    resolved atomically: ``_load_project_instructions`` runs before any
+    mutation, and if it ever raises the session stays untouched. The frozen
+    bundle also keeps dispatch state from being mutated mid-apply.
+
+    ``messages`` is stored by reference on purpose — callers hand over
+    fresh lists (`[]` on new chat, `record.messages` on load, or the
+    session's own list on project detach/update routing) and the receiver
+    rebinds `session.messages`. If a snapshot is ever needed, copy at the
+    call site; do not add a defensive copy here (would cost a list copy
+    per switch for no current caller).
     """
 
     session_id: str
     messages: list[Message]
     project_id: str | None
+
+    def __post_init__(self) -> None:
+        if not self.session_id:
+            raise ValueError("SessionSwitch.session_id must be non-empty")
 
 
 OnSessionSwitch = Callable[[SessionSwitch], None]
