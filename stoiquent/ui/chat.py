@@ -160,11 +160,12 @@ class ChatPanel:
 
 
 def _row(role: str, name: str) -> ui.column:
-    """Render a flat ``sq-msg`` row and return its body column.
+    """Return the body column of a flat ``sq-msg`` row.
 
-    The outer wrapper gets ``sq-msg`` + ``sq-msg--<role>`` (which drives the
-    coral accent border for user rows and the neutral border for assistant).
-    The role label is rendered as a small caption above the body.
+    The flat layout is theme-owned — callers nest content into the returned
+    body column so CSS tokens (not a Quasar chat-bubble component) drive the
+    look, and so role-specific accents live in ``theme.py`` rather than in
+    the chat renderer.
     """
     wrapper = ui.column().classes(f"sq-msg sq-msg--{role} w-full").mark(f"msg-{role}")
     with wrapper:

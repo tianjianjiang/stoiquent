@@ -65,7 +65,8 @@ async def test_layout_mounts_dark_mode_toggle(user: User, tmp_path: Path) -> Non
         await layout.render(session, project_store=project_store)
 
     await user.open("/test-dark-toggle")
-    user.find(marker="dark-mode-toggle")
+    toggles = list(user.find(marker="dark-mode-toggle").elements)
+    assert len(toggles) == 1, f"expected exactly one dark-mode toggle, got {toggles}"
 
 
 @pytest.mark.asyncio

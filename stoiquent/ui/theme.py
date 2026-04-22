@@ -1,17 +1,22 @@
 """Dark-first visual theme for Stoiquent.
 
-`apply_theme()` injects the font links and the CSS custom-property driven
-stylesheet into the current page head. `DarkModeToggle` wraps
-`ui.dark_mode()` behind a header icon button and persists the preference to
-`localStorage` so mode survives page reloads.
+`apply_theme()` injects fonts and the CSS-variable-driven stylesheet into
+the page head. `DarkModeToggle` wraps `ui.dark_mode()` behind a header icon
+button and persists the preference to `localStorage` so the mode survives
+page reloads without requiring a server-side storage secret.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
-from typing import Any, Final
+import logging
+from typing import Final
 
 from nicegui import ui
+from nicegui.events import ValueChangeEventArguments
+
+logger = logging.getLogger(__name__)
 
 _FONTS_URL: Final[str] = (
     "https://fonts.googleapis.com/css2?"
@@ -53,7 +58,8 @@ html, body, .q-page, .nicegui-content {
   font-family: var(--sq-font-sans);
 }
 
-h1, h2, h3, .text-h1, .text-h2, .text-h3, .text-h5, .text-h6 {
+h1, h2, h3, h4, h5, h6,
+.text-h1, .text-h2, .text-h3, .text-h4, .text-h5, .text-h6 {
   font-family: var(--sq-font-serif);
   letter-spacing: -0.01em;
   color: var(--sq-fg);
@@ -66,7 +72,7 @@ code, pre, .q-code, .nicegui-code {
   border-radius: 6px;
 }
 
-/* Message rows — flat layout replacing ui.chat_message bubbles. */
+/* Flat message rows, styled entirely via theme tokens. */
 .sq-msg {
   width: 100%;
   padding: 12px 16px;
@@ -86,7 +92,7 @@ code, pre, .q-code, .nicegui-code {
 .sq-msg__body a { color: var(--sq-accent); }
 .sq-msg__body a:hover { text-decoration: underline; }
 
-/* Tool card tokens (replacing hardcoded Tailwind utility colors). */
+/* Tool card tokens. */
 .sq-tool-icon { color: var(--sq-accent); }
 .sq-tool-ok { color: var(--sq-accent); opacity: 0.85; }
 
@@ -131,7 +137,6 @@ header.q-header {
 
 
 def apply_theme() -> None:
-    """Inject fonts + CSS custom properties into the current page head."""
     ui.add_head_html('<link rel="preconnect" href="https://fonts.googleapis.com">')
     ui.add_head_html(
         '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
@@ -143,16 +148,21 @@ def apply_theme() -> None:
 class DarkModeToggle:
     """Header-mounted icon button wrapping `ui.dark_mode()`.
 
-    Default is dark (first-load UX intent). The current value is persisted to
-    browser `localStorage` under a namespaced key so the preference survives
-    page reloads without requiring a server-side storage secret.
+    Persists the current value to browser `localStorage` under a namespaced
+    key so the preference survives page reloads without a server-side
+    storage secret. The persist callback is bound only after `_restore`
+    finishes so an init-time value event cannot clobber the saved
+    preference before we read it.
     """
 
     _LS_KEY: Final[str] = "stoiquent:dark_mode"
 
     def __init__(self, *, default_dark: bool = True) -> None:
+        self._restored = False
         self._dark_mode = ui.dark_mode(value=default_dark)
-        self._dark_mode.on_value_change(self._persist)
+        # Anchor the button element in the enclosing slot — NiceGUI
+        # elements register on construction; keeping the reference
+        # documents intent and prevents accidental GC.
         self._button = (
             ui.button(icon="contrast", on_click=self.toggle)
             .props('flat round dense aria-label="Toggle dark mode"')
@@ -168,19 +178,24 @@ class DarkModeToggle:
     def toggle(self) -> None:
         self._dark_mode.value = not self._dark_mode.value
 
-    def _persist(self, event: Any) -> None:
+    def _persist(self, event: ValueChangeEventArguments) -> None:
         js_value = "true" if event.value else "false"
         ui.run_javascript(
-            f"localStorage.setItem({json.dumps(self._LS_KEY)}, '{js_value}');"
+            f"localStorage.setItem({json.dumps(self._LS_KEY)}, {json.dumps(js_value)});"
         )
 
     async def _restore(self) -> None:
+        saved: str | None = None
         try:
             saved = await ui.run_javascript(
                 f"localStorage.getItem({json.dumps(self._LS_KEY)})"
             )
-        except Exception:
-            return
-        if saved is None:
-            return
-        self._dark_mode.value = str(saved).lower() == "true"
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.debug("dark-mode restore skipped: %s", exc, exc_info=True)
+        if saved is not None:
+            self._dark_mode.value = str(saved).lower() == "true"
+        if not self._restored:
+            self._dark_mode.on_value_change(self._persist)
+            self._restored = True
