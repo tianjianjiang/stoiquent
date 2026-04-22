@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import time
 from pathlib import Path
@@ -210,7 +209,7 @@ def test_list_conversations_unfiltered_returns_all(tmp_path: Path) -> None:
 async def test_save_background_preserves_project_id(tmp_path: Path) -> None:
     store = _make_store(tmp_path)
     store.save_background("bg1", _sample_messages(), project_id="p1")
-    await asyncio.gather(*store._pending_tasks)
+    await store.drain_pending()
 
     record = store.load("bg1")
     assert record is not None
@@ -221,7 +220,7 @@ async def test_save_background_preserves_none_project_id(tmp_path: Path) -> None
     """Non-None session.project_id must round-trip; None remains None."""
     store = _make_store(tmp_path)
     store.save_background("bg_none", _sample_messages())
-    await asyncio.gather(*store._pending_tasks)
+    await store.drain_pending()
 
     record = store.load("bg_none")
     assert record is not None
@@ -586,9 +585,7 @@ async def test_list_conversations_async(tmp_path: Path) -> None:
 async def test_save_background_completes_without_error(tmp_path: Path) -> None:
     store = _make_store(tmp_path)
     store.save_background("bg123", _sample_messages())
-
-    # Give the background task time to complete
-    await asyncio.sleep(0.1)
+    await store.drain_pending()
 
     path = tmp_path / "conversations" / "bg123.json"
     assert path.exists()
