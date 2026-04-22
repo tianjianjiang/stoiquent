@@ -4,6 +4,7 @@ import json
 import logging
 import uuid
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from nicegui import ui
@@ -19,7 +20,34 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-OnSessionSwitch = Callable[[str, list[Message], str | None], None]
+
+@dataclass(frozen=True, slots=True)
+class SessionSwitch:
+    """Intent to move the active chat to a new session.
+
+    Bundles the three fields ``_apply_session_switch`` needs so they can be
+    resolved atomically: ``_load_project_instructions`` runs before any
+    mutation, and if it ever raises the session stays untouched. The frozen
+    bundle also keeps dispatch state from being mutated mid-apply.
+
+    ``messages`` is stored by reference on purpose — callers hand over
+    fresh lists (`[]` on new chat, `record.messages` on load, or the
+    session's own list on project detach/update routing) and the receiver
+    rebinds `session.messages`. If a snapshot is ever needed, copy at the
+    call site; do not add a defensive copy here (would cost a list copy
+    per switch for no current caller).
+    """
+
+    session_id: str
+    messages: list[Message]
+    project_id: str | None
+
+    def __post_init__(self) -> None:
+        if not self.session_id:
+            raise ValueError("SessionSwitch.session_id must be non-empty")
+
+
+OnSessionSwitch = Callable[[SessionSwitch], None]
 
 _UNGROUPED_LABEL = "— Ungrouped"
 """Session-group header for conversations with no project or a deleted/missing one.
@@ -146,7 +174,13 @@ class Sidebar:
         if record is None:
             ui.notify("Could not load conversation", type="warning")
             return
-        self._on_session_switch(record.id, record.messages, record.project_id)
+        self._on_session_switch(
+            SessionSwitch(
+                session_id=record.id,
+                messages=record.messages,
+                project_id=record.project_id,
+            )
+        )
         await self._refresh_sessions()
 
     async def _new_session(self) -> None:
@@ -157,7 +191,13 @@ class Sidebar:
                 self._session.project_id,
             )
         new_id = uuid.uuid4().hex[:8]
-        self._on_session_switch(new_id, [], self._active_project_id)
+        self._on_session_switch(
+            SessionSwitch(
+                session_id=new_id,
+                messages=[],
+                project_id=self._active_project_id,
+            )
+        )
         await self._refresh_sessions()
 
     # --- Projects tab ---
@@ -357,10 +397,19 @@ class Sidebar:
             logger.error("Failed to update project %s", record.id, exc_info=True)
             ui.notify("Failed to update project", type="warning")
             return False
-        # If the active session belongs to this project, refresh its instructions
-        # so the next agent turn sees the new prompt immediately.
+        # If the active session belongs to this project, route a no-op
+        # session switch through the callback so project_instructions
+        # re-resolves via the layout-owned single source of truth
+        # (`_apply_session_switch`). Direct mutation here would diverge
+        # from that invariant — the whole reason layout owns the resolve.
         if self._session.project_id == record.id:
-            self._session.project_instructions = updated.instructions
+            self._on_session_switch(
+                SessionSwitch(
+                    session_id=self._session.id,
+                    messages=self._session.messages,
+                    project_id=self._session.project_id,
+                )
+            )
         await self._refresh_projects()
         await self._refresh_sessions()
         return True
@@ -488,8 +537,17 @@ class Sidebar:
         if self._active_project_id == project_id:
             self._active_project_id = None
         if self._session.project_id == project_id:
-            self._session.project_id = None
-            self._session.project_instructions = ""
+            # Route through the switch callback so the layout owns both
+            # project_id and project_instructions mutations in one spot.
+            # Sends the same session_id + messages because we're detaching
+            # from the project, not switching chats.
+            self._on_session_switch(
+                SessionSwitch(
+                    session_id=self._session.id,
+                    messages=self._session.messages,
+                    project_id=None,
+                )
+            )
         await self._refresh_projects()
         await self._refresh_sessions()
 
