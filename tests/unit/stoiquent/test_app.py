@@ -118,17 +118,15 @@ def test_should_drain_pending_store_writes_on_shutdown() -> None:
         start(config)
 
         registered = [call.args[0] for call in mock_app.on_shutdown.call_args_list]
-        assert mock_conv_store_cls.return_value.drain_pending in registered
-        assert mock_project_store_cls.return_value.drain_pending in registered
+        conv_drain = mock_conv_store_cls.return_value.drain_pending
+        project_drain = mock_project_store_cls.return_value.drain_pending
+        assert conv_drain in registered
+        assert project_drain in registered
 
         provider_close_idx = registered.index(mock_provider_cls.return_value.close)
         bridge_stop_idx = registered.index(mock_bridge_cls.return_value.stop_all)
-        conv_drain_idx = registered.index(
-            mock_conv_store_cls.return_value.drain_pending
-        )
-        project_drain_idx = registered.index(
-            mock_project_store_cls.return_value.drain_pending
-        )
+        conv_drain_idx = registered.index(conv_drain)
+        project_drain_idx = registered.index(project_drain)
         assert provider_close_idx < conv_drain_idx
         assert bridge_stop_idx < conv_drain_idx
         assert conv_drain_idx < project_drain_idx
