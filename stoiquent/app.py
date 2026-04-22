@@ -59,7 +59,7 @@ def start(config: AppConfig) -> None:
 
     @ui.page("/")
     async def _main_page() -> None:  # pragma: no cover
-        await layout.render(session, store, config, project_store)
+        await layout.render(session, store, config, project_store=project_store)
 
     kwargs: dict = {
         "title": "Stoiquent",

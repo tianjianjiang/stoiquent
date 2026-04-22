@@ -23,7 +23,8 @@ async def render(
     session: Session,
     store: ConversationStore | None = None,
     config: AppConfig | None = None,
-    project_store: ProjectStore | None = None,
+    *,
+    project_store: ProjectStore,
 ) -> None:
     chat = ChatPanel(session, store)
 

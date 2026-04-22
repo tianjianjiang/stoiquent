@@ -7,14 +7,21 @@ Then use Playwright MCP tools to interact at http://127.0.0.1:8080
 
 from __future__ import annotations
 
+import tempfile
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 
 from nicegui import ui
 
 from stoiquent.agent.session import Session
-from stoiquent.models import Message, StreamChunk
+from stoiquent.models import Message, PersistenceConfig, StreamChunk
+from stoiquent.projects import ProjectStore
 from stoiquent.ui import layout
+
+
+_DATA_DIR = tempfile.mkdtemp(prefix="stoiquent-playwright-")
+_PROJECT_STORE = ProjectStore(PersistenceConfig(data_dir=_DATA_DIR))
+_PROJECT_STORE.ensure_dirs()
 
 
 @dataclass
@@ -47,7 +54,7 @@ def _make_session() -> Session:
 
 @ui.page("/")
 async def page() -> None:
-    await layout.render(_make_session())
+    await layout.render(_make_session(), project_store=_PROJECT_STORE)
 
 
 if __name__ == "__main__":
