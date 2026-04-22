@@ -275,18 +275,64 @@ class Sidebar:
         self._active_project_id = project_id
         await self._refresh_projects()
 
+    def _build_project_form_inputs(
+        self,
+        record: ProjectRecord | None = None,
+        *,
+        mark_prefix: str = "",
+    ) -> tuple[ui.input, ui.input, ui.textarea]:
+        """Build the three shared inputs for new/edit project dialogs.
+
+        Returns ``(name, folder, instructions)`` widgets, pre-filled from
+        ``record`` on edit. ``mark_prefix`` preserves the E2E markers
+        (``new-project-name`` etc.) used by the existing new-project tests;
+        edit dialog passes the empty default since it had no markers
+        pre-F4 and adding them here would silently gate on tests that
+        don't exist yet.
+        """
+        name_input = (
+            ui.input("Name", value=record.name if record else "")
+            .classes("w-full")
+        )
+        folder_input = (
+            ui.input("Folder", value=record.folder if record else "")
+            .classes("w-full")
+        )
+        instructions_input = (
+            ui.textarea("Instructions", value=record.instructions if record else "")
+            .classes("w-full")
+            .props("rows=4")
+        )
+        if mark_prefix:
+            name_input.mark(f"{mark_prefix}-name")
+            folder_input.mark(f"{mark_prefix}-folder")
+            instructions_input.mark(f"{mark_prefix}-instructions")
+        return name_input, folder_input, instructions_input
+
+    async def _persist_project_record(
+        self, record: ProjectRecord, failure_message: str
+    ) -> bool:
+        """Save ``record`` via ``project_store.save``; return True iff saved.
+
+        Centralizes the OSError → log + notify + False pattern that was
+        duplicated across ``_create_project`` and ``_update_project``. The
+        caller chooses the user-facing ``failure_message`` ("Failed to
+        create project" vs "Failed to update project") so the toast reads
+        naturally without a save-time enum.
+        """
+        try:
+            await self._project_store.save(record)
+        except OSError:
+            logger.error("Failed to save project %s", record.id, exc_info=True)
+            ui.notify(failure_message, type="warning")
+            return False
+        return True
+
     def _open_new_project_dialog(self) -> None:
         with ui.dialog() as dialog, ui.card().classes("min-w-80"):
             ui.label("New Project").classes("text-h6")
-            name_input = ui.input("Name").classes("w-full").mark("new-project-name")
-            folder_input = ui.input("Folder").classes("w-full").mark(
-                "new-project-folder"
-            )
-            instructions_input = (
-                ui.textarea("Instructions")
-                .classes("w-full")
-                .props("rows=4")
-                .mark("new-project-instructions")
+            name_input, folder_input, instructions_input = (
+                self._build_project_form_inputs(mark_prefix="new-project")
             )
             with ui.row().classes("w-full justify-end"):
                 ui.button("Cancel", on_click=dialog.close).props("flat")
@@ -317,15 +363,15 @@ class Sidebar:
         if not name or not folder:
             ui.notify("Name and folder are required", type="warning")
             return False
-        project_id = uuid.uuid4().hex[:8]
         record = ProjectRecord(
-            id=project_id, name=name, folder=folder, instructions=instructions
+            id=uuid.uuid4().hex[:8],
+            name=name,
+            folder=folder,
+            instructions=instructions,
         )
-        try:
-            await self._project_store.save(record)
-        except OSError:
-            logger.error("Failed to save project %s", project_id, exc_info=True)
-            ui.notify("Failed to create project", type="warning")
+        if not await self._persist_project_record(
+            record, "Failed to create project"
+        ):
             return False
         await self._refresh_projects()
         return True
@@ -347,12 +393,8 @@ class Sidebar:
             return
         with ui.dialog() as dialog, ui.card().classes("min-w-80"):
             ui.label("Edit Project").classes("text-h6")
-            name_input = ui.input("Name", value=record.name).classes("w-full")
-            folder_input = ui.input("Folder", value=record.folder).classes("w-full")
-            instructions_input = (
-                ui.textarea("Instructions", value=record.instructions)
-                .classes("w-full")
-                .props("rows=4")
+            name_input, folder_input, instructions_input = (
+                self._build_project_form_inputs(record)
             )
             with ui.row().classes("w-full justify-end"):
                 ui.button("Cancel", on_click=dialog.close).props("flat")
@@ -391,11 +433,9 @@ class Sidebar:
         updated = record.model_copy(
             update={"name": name, "folder": folder, "instructions": instructions}
         )
-        try:
-            await self._project_store.save(updated)
-        except OSError:
-            logger.error("Failed to update project %s", record.id, exc_info=True)
-            ui.notify("Failed to update project", type="warning")
+        if not await self._persist_project_record(
+            updated, "Failed to update project"
+        ):
             return False
         # If the active session belongs to this project, route a no-op
         # session switch through the callback so project_instructions
