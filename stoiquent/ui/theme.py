@@ -12,7 +12,7 @@ import json
 import logging
 from typing import Final
 
-from nicegui import ui
+from nicegui import background_tasks, ui
 from nicegui.events import ValueChangeEventArguments
 
 logger = logging.getLogger(__name__)
@@ -168,7 +168,7 @@ class DarkModeToggle:
             .tooltip("Toggle dark mode")
             .mark("dark-mode-toggle")
         )
-        ui.timer(0.05, self._restore, once=True)
+        background_tasks.create_or_defer(self._restore(), name="dark-mode-restore")
 
     @property
     def value(self) -> bool:

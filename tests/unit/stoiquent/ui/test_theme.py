@@ -236,7 +236,8 @@ async def test_dark_mode_toggle_restore_applies_saved_false(
 
     await user.open("/test-toggle-restore-false")
     assert toggle is not None
-    assert toggle.value is True  # default before restore
+    # _restore is scheduled as a background task from __init__. Await it
+    # explicitly for determinism — it's idempotent via the _restored guard.
     await toggle._restore()
     assert toggle.value is False
 
@@ -259,8 +260,7 @@ async def test_dark_mode_toggle_restore_applies_saved_true(
 
     await user.open("/test-toggle-restore-true")
     assert toggle is not None
-    assert toggle.value is False
-    await toggle._restore()
+    await toggle._restore()  # idempotent; guarantees completion for the assert
     assert toggle.value is True
 
 
