@@ -95,6 +95,10 @@ def test_should_drain_pending_store_writes_on_shutdown() -> None:
     in-flight save_background tasks finish before NiceGUI tears the loop down.
     Without this, chat messages / project edits saved shortly before close can
     be lost.
+
+    Store drains must be registered *after* provider.close and
+    mcp_bridge.stop_all so any subsystem-triggered final writes have already
+    been issued when we start awaiting the pending-tasks set.
     """
     config = AppConfig(
         providers={"p": ProviderConfig(base_url="http://x", model="m")},
@@ -102,6 +106,8 @@ def test_should_drain_pending_store_writes_on_shutdown() -> None:
     )
     with patch("stoiquent.app.ui") as mock_ui, \
          patch("stoiquent.app.app") as mock_app, \
+         patch("stoiquent.app.OpenAICompatProvider") as mock_provider_cls, \
+         patch("stoiquent.app.MCPBridge") as mock_bridge_cls, \
          patch("stoiquent.app.ConversationStore") as mock_conv_store_cls, \
          patch("stoiquent.app.ProjectStore") as mock_project_store_cls:
         mock_ui.run = MagicMock()
@@ -114,6 +120,18 @@ def test_should_drain_pending_store_writes_on_shutdown() -> None:
         registered = [call.args[0] for call in mock_app.on_shutdown.call_args_list]
         assert mock_conv_store_cls.return_value.drain_pending in registered
         assert mock_project_store_cls.return_value.drain_pending in registered
+
+        provider_close_idx = registered.index(mock_provider_cls.return_value.close)
+        bridge_stop_idx = registered.index(mock_bridge_cls.return_value.stop_all)
+        conv_drain_idx = registered.index(
+            mock_conv_store_cls.return_value.drain_pending
+        )
+        project_drain_idx = registered.index(
+            mock_project_store_cls.return_value.drain_pending
+        )
+        assert provider_close_idx < conv_drain_idx
+        assert bridge_stop_idx < conv_drain_idx
+        assert conv_drain_idx < project_drain_idx
 
 
 def test_should_raise_systemexit_when_project_store_ensure_dirs_fails() -> None:
