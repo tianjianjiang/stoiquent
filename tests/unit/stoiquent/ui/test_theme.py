@@ -1,12 +1,22 @@
 from __future__ import annotations
 
 import logging
+from typing import Iterator
 
 import pytest
 from nicegui import ui
 from nicegui.testing import User
 
 from stoiquent.ui.theme import DarkModeToggle, apply_theme
+
+
+class _DoneAwaitable:
+    """Already-resolved awaitable so a sync caller (`ui.run_javascript` in
+    ``_persist``) can drop the return value without a RuntimeWarning, while
+    an async caller (``_restore``) can still ``await`` it."""
+
+    def __await__(self) -> Iterator[None]:
+        return iter(())
 
 
 @pytest.mark.asyncio
@@ -149,10 +159,12 @@ async def test_dark_mode_toggle_persist_writes_false_after_toggle_from_dark(
     """Toggling from the dark default must write ``'false'`` to localStorage
     — confirms the value direction, not just that *some* JS call fires."""
     js_calls: list[str] = []
-    monkeypatch.setattr(
-        "stoiquent.ui.theme.ui.run_javascript",
-        lambda code: js_calls.append(code),
-    )
+
+    def fake_js(code: str) -> _DoneAwaitable:
+        js_calls.append(code)
+        return _DoneAwaitable()
+
+    monkeypatch.setattr("stoiquent.ui.theme.ui.run_javascript", fake_js)
 
     toggle: DarkModeToggle | None = None
 
@@ -177,10 +189,12 @@ async def test_dark_mode_toggle_persist_writes_true_after_toggle_from_light(
     user: User, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     js_calls: list[str] = []
-    monkeypatch.setattr(
-        "stoiquent.ui.theme.ui.run_javascript",
-        lambda code: js_calls.append(code),
-    )
+
+    def fake_js(code: str) -> _DoneAwaitable:
+        js_calls.append(code)
+        return _DoneAwaitable()
+
+    monkeypatch.setattr("stoiquent.ui.theme.ui.run_javascript", fake_js)
 
     toggle: DarkModeToggle | None = None
 

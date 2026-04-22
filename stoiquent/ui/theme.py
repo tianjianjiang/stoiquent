@@ -8,7 +8,6 @@ page reloads without requiring a server-side storage secret.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from typing import Final
@@ -190,9 +189,7 @@ class DarkModeToggle:
             saved = await ui.run_javascript(
                 f"localStorage.getItem({json.dumps(self._LS_KEY)})"
             )
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
+        except (RuntimeError, ConnectionError, TimeoutError, OSError) as exc:
             logger.debug("dark-mode restore skipped: %s", exc, exc_info=True)
         if saved is not None:
             self._dark_mode.value = str(saved).lower() == "true"
