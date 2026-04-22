@@ -55,9 +55,22 @@ async def test_should_render_local_llm_label(user: User, tmp_path: Path) -> None
 
 
 @pytest.mark.asyncio
-async def test_should_render_provider_dropdown(
-    user: User, tmp_path: Path
-) -> None:
+async def test_layout_mounts_dark_mode_toggle(user: User, tmp_path: Path) -> None:
+    """Header must include the DarkModeToggle so users can flip themes."""
+    session = Session(provider=FakeProvider())
+    project_store = make_project_store(tmp_path)
+
+    @ui.page("/test-dark-toggle")
+    async def page() -> None:
+        await layout.render(session, project_store=project_store)
+
+    await user.open("/test-dark-toggle")
+    toggles = list(user.find(marker="dark-mode-toggle").elements)
+    assert len(toggles) == 1, f"expected exactly one dark-mode toggle, got {toggles}"
+
+
+@pytest.mark.asyncio
+async def test_should_render_provider_dropdown(user: User, tmp_path: Path) -> None:
     session = Session(provider=FakeProvider())
     config = two_provider_config(second="cloud-gpt")
     project_store = make_project_store(tmp_path)
@@ -134,7 +147,9 @@ def test_switch_provider_returns_false_for_unknown_name() -> None:
     assert session.provider is original
 
 
-def test_switch_provider_logs_warning_when_no_event_loop(caplog: pytest.LogCaptureFixture) -> None:
+def test_switch_provider_logs_warning_when_no_event_loop(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """Cover lines 87-88: RuntimeError branch when no event loop is running."""
     provider = FakeProvider()
     provider.close = AsyncMock()  # type: ignore[attr-defined]
@@ -149,7 +164,9 @@ def test_switch_provider_logs_warning_when_no_event_loop(caplog: pytest.LogCaptu
     assert "No event loop to close old provider" in caplog.text
 
 
-async def test_switch_provider_logs_close_error(caplog: pytest.LogCaptureFixture) -> None:
+async def test_switch_provider_logs_close_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """Cover line 81: _log_close_error callback when provider.close() raises."""
     provider = FakeProvider()
     provider.close = AsyncMock(side_effect=RuntimeError("close failed"))  # type: ignore[attr-defined]
@@ -257,8 +274,10 @@ def test_load_project_instructions_returns_empty_on_damaged_file(
 
     assert result == ""
     warning_records = [
-        r for r in caplog.records
-        if r.levelname == "WARNING" and r.name == "stoiquent.ui.layout"
+        r
+        for r in caplog.records
+        if r.levelname == "WARNING"
+        and r.name == "stoiquent.ui.layout"
         and "proj1" in r.message
     ]
     assert warning_records, "expected a WARNING log from layout about proj1"

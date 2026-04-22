@@ -9,6 +9,7 @@ from nicegui import ui
 from stoiquent.agent.session import Session
 from stoiquent.ui.chat import ChatPanel
 from stoiquent.ui.sidebar import Sidebar, SessionSwitch
+from stoiquent.ui.theme import DarkModeToggle, apply_theme
 
 if TYPE_CHECKING:
     from stoiquent.models import AppConfig
@@ -25,6 +26,7 @@ async def render(
     *,
     project_store: ProjectStore,
 ) -> None:
+    apply_theme()
     chat = ChatPanel(session, store)
 
     def on_session_switch(switch: SessionSwitch) -> None:
@@ -43,6 +45,7 @@ async def render(
     with ui.header().classes("items-center gap-4 px-4"):
         ui.label("Stoiquent").classes("text-h6 font-bold")
         ui.space()
+        DarkModeToggle()
         if config and config.providers:
             provider_names = list(config.providers.keys())
             ui.select(

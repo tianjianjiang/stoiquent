@@ -28,10 +28,16 @@ class ChatPanel:
 
     def render(self) -> None:
         with ui.column().classes("w-full flex-grow gap-0"):
-            self._messages_container = ui.column().classes(
-                "w-full flex-grow gap-2 p-4 overflow-auto"
-            ).mark("messages")
-            with ui.row().classes("w-full p-4 gap-2 items-center border-t"):
+            self._messages_container = (
+                ui.column()
+                .classes("w-full flex-grow gap-2 p-4 overflow-auto")
+                .mark("messages")
+            )
+            with (
+                ui.row()
+                .classes("w-full p-4 gap-2 items-center border-t")
+                .style("border-color: var(--sq-border)")
+            ):
                 self._input = (
                     ui.input(placeholder="Type a message...")
                     .classes("flex-grow")
@@ -48,25 +54,22 @@ class ChatPanel:
         with self._messages_container:
             for msg in self.session.messages:
                 if msg.role == "user":
-                    ui.chat_message(
-                        text=msg.content or "", name="You", sent=True
-                    )
+                    with _row("user", "You"):
+                        ui.markdown(msg.content or "")
                 elif msg.role == "assistant":
-                    ui.chat_message(name="Assistant", sent=False)
-                    if msg.tool_calls:
-                        for tc in msg.tool_calls:
-                            render_tool_call(tc)
-                    if msg.content:
-                        ui.markdown(msg.content)
-                    if msg.reasoning:
-                        with ui.expansion(
-                            "Reasoning", icon="psychology"
-                        ).classes("text-xs"):
-                            ui.markdown(msg.reasoning)
+                    with _row("assistant", "Assistant"):
+                        if msg.tool_calls:
+                            for tc in msg.tool_calls:
+                                render_tool_call(tc)
+                        if msg.content:
+                            ui.markdown(msg.content)
+                        if msg.reasoning:
+                            with ui.expansion("Reasoning", icon="psychology").classes(
+                                "text-xs"
+                            ):
+                                ui.markdown(msg.reasoning)
                 elif msg.role == "tool":
-                    render_tool_result(
-                        msg.tool_call_id or "", msg.content or ""
-                    )
+                    render_tool_result(msg.tool_call_id or "", msg.content or "")
 
     async def _send(self) -> None:
         if self._sending:
@@ -85,18 +88,20 @@ class ChatPanel:
             raise RuntimeError("ChatPanel.render() must be called before _send()")
 
         with self._messages_container:
-            ui.chat_message(text=user_text, name="You", sent=True)
+            with _row("user", "You"):
+                ui.markdown(user_text)
 
-            ui.chat_message(name="Assistant", sent=False)
-            response_md = ui.markdown("")
-            reasoning_expansion = ui.expansion(
-                "Reasoning", icon="psychology"
-            ).classes("w-full text-xs")
-            with reasoning_expansion:
-                reasoning_md = ui.markdown("")
-            reasoning_expansion.set_visibility(False)
+            assistant_body = _row("assistant", "Assistant")
+            with assistant_body:
+                response_md = ui.markdown("")
+                reasoning_expansion = ui.expansion(
+                    "Reasoning", icon="psychology"
+                ).classes("w-full text-xs")
+                with reasoning_expansion:
+                    reasoning_md = ui.markdown("")
+                reasoning_expansion.set_visibility(False)
 
-            spinner = ui.spinner("dots", size="sm")
+                spinner = ui.spinner("dots", size="sm")
 
         content_so_far = ""
         reasoning_so_far = ""
@@ -152,3 +157,18 @@ class ChatPanel:
                 logger.warning("Failed to schedule background save", exc_info=True)
 
         ui.run_javascript("window.scrollTo(0, document.body.scrollHeight)")
+
+
+def _row(role: str, name: str) -> ui.column:
+    """Return the body column of a flat ``sq-msg`` row.
+
+    The flat layout is theme-owned — callers nest content into the returned
+    body column so CSS tokens (not a Quasar chat-bubble component) drive the
+    look, and so role-specific accents live in ``theme.py`` rather than in
+    the chat renderer.
+    """
+    wrapper = ui.column().classes(f"sq-msg sq-msg--{role} w-full").mark(f"msg-{role}")
+    with wrapper:
+        ui.label(name).classes("sq-msg__role")
+        body = ui.column().classes("sq-msg__body w-full")
+    return body
