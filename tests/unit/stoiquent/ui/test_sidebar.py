@@ -1261,6 +1261,10 @@ async def test_user_named_ungrouped_project_renders_distinct_from_bucket(
     """Locks item 14: a user who names a project literally "Ungrouped" gets a
     distinct header from the sessions-without-a-project bucket. Before the
     em-dash prefix the two groups shared a header and read as a single list.
+
+    Asserts header-text ordering so a bug that dropped the em-dash prefix
+    (collapsing both groups into one "Ungrouped" header) would be caught —
+    `should_see` alone matches substrings and can't distinguish the two.
     """
     store = make_store(tmp_path)
     store.save_sync(
@@ -1290,6 +1294,15 @@ async def test_user_named_ungrouped_project_renders_distinct_from_bucket(
     await user.should_see("tagged-chat")
     await user.should_see("loose-chat")
 
+    # A bug that dropped the em-dash prefix would collapse both groups
+    # under one "Ungrouped" header; lock the distinct bucket label
+    # precisely-once. The plain "Ungrouped" may appear multiple times
+    # (projects tab row + sessions tab group header), which is fine.
+    rendered_text = [el.text for el in user.find("Ungrouped").elements]
+    bucket_labels = [t for t in rendered_text if t and t.startswith("— ")]
+    assert bucket_labels == ["— Ungrouped"]
+    assert any(t == "Ungrouped" for t in rendered_text)
+
 
 @pytest.mark.asyncio
 async def test_refresh_projects_handles_list_failure(
@@ -1314,51 +1327,49 @@ async def test_refresh_projects_handles_list_failure(
 
 @pytest.mark.asyncio
 async def test_list_projects_safe_notifies_once_until_recovery(
-    user: User, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     """Locks item 11: a failing ProjectStore surfaces ONE toast per
     healthy→failed transition. Silent re-bucketing during a sustained failure
     was the pre-F2 behavior that left users without a signal.
+
+    Drives `_list_projects_safe` directly instead of going through render,
+    so the assertion count doesn't silently drift if render's internal
+    refresh sequence changes.
     """
     session = Session(provider=FakeProvider())
     store = make_store(tmp_path)
     project_store = make_project_store(tmp_path)
     project_store.list_projects_async = AsyncMock(side_effect=OSError("io"))
+    s = Sidebar(session, store, lambda *_: None, project_store)
 
-    sidebar_ref: list[Sidebar] = []
+    with caplog.at_level(logging.ERROR), patch(
+        "stoiquent.ui.sidebar.ui.notify"
+    ) as mock_notify:
+        # Consecutive successes (idempotent: no notify on either call).
+        project_store.list_projects_async = AsyncMock(return_value=[])
+        await s._list_projects_safe()
+        await s._list_projects_safe()
+        assert mock_notify.call_count == 0
 
-    @ui.page("/test-list-safe-transition")
-    async def page() -> None:
-        s = Sidebar(session, store, lambda *_: None, project_store)
-        sidebar_ref.append(s)
-        await s.render()
+        # First failure: healthy→failed transition fires one notify.
+        project_store.list_projects_async = AsyncMock(side_effect=OSError("io"))
+        await s._list_projects_safe()
+        assert mock_notify.call_count == 1
 
-    with caplog.at_level(logging.ERROR):
-        await user.open("/test-list-safe-transition")
-        s = sidebar_ref[0]
-        # Reset the flag so the patch below captures the first
-        # healthy→failed transition deterministically (render already
-        # exercised _list_projects_safe twice and flipped it).
-        s._projects_load_healthy = True
+        # Second failure: flag already flipped, no re-notify.
+        await s._list_projects_safe()
+        assert mock_notify.call_count == 1
 
-        with patch("stoiquent.ui.sidebar.ui.notify") as mock_notify:
-            await s._list_projects_safe()
-            assert mock_notify.call_count == 1
-            # Second failing call: flag already flipped, no re-notify.
-            await s._list_projects_safe()
-            assert mock_notify.call_count == 1
+        # Recover: successful load clears the flag without notifying.
+        project_store.list_projects_async = AsyncMock(return_value=[])
+        await s._list_projects_safe()
+        assert mock_notify.call_count == 1
 
-            # Recover: successful load clears the flag without notifying.
-            project_store.list_projects_async = AsyncMock(return_value=[])
-            await s._list_projects_safe()
-            assert mock_notify.call_count == 1
-
-            # Re-fail: healthy→failed transition should re-notify.
-            project_store.list_projects_async = AsyncMock(
-                side_effect=OSError("io2")
-            )
-            await s._list_projects_safe()
-            assert mock_notify.call_count == 2
+        # Re-fail: healthy→failed transition fires again.
+        project_store.list_projects_async = AsyncMock(side_effect=OSError("io2"))
+        await s._list_projects_safe()
+        assert mock_notify.call_count == 2
     caplog.clear()
 
 

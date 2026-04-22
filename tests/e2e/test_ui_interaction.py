@@ -20,22 +20,29 @@ from stoiquent.agent.session import Session
 from stoiquent.models import Message, StreamChunk
 from stoiquent.skills.catalog import SkillCatalog
 from stoiquent.ui import layout
-from tests.conftest import FakeProvider, make_skill, make_store, two_provider_config
+from tests.conftest import (
+    FakeProvider,
+    make_project_store,
+    make_skill,
+    make_store,
+    two_provider_config,
+)
 
 
 # --- Send message ---
 
 
-async def test_send_message_shows_response(user: User) -> None:
+async def test_send_message_shows_response(user: User, tmp_path: Path) -> None:
     chunks = [
         StreamChunk(content_delta="Hello from the agent!"),
         StreamChunk(finish_reason="stop"),
     ]
     session = Session(provider=FakeProvider(chunks=chunks))
+    project_store = make_project_store(tmp_path)
 
     @ui.page("/")
     async def page() -> None:
-        await layout.render(session)
+        await layout.render(session, project_store=project_store)
 
     await user.open("/")
     user.find(marker="chat-input").type("Hi there")
@@ -46,12 +53,13 @@ async def test_send_message_shows_response(user: User) -> None:
 # --- Tab navigation ---
 
 
-async def test_sidebar_tabs_navigation(user: User) -> None:
+async def test_sidebar_tabs_navigation(user: User, tmp_path: Path) -> None:
     session = Session(provider=FakeProvider())
+    project_store = make_project_store(tmp_path)
 
     @ui.page("/")
     async def page() -> None:
-        await layout.render(session)
+        await layout.render(session, project_store=project_store)
 
     await user.open("/")
     await user.should_see("Sessions")
@@ -70,16 +78,17 @@ async def test_sidebar_tabs_navigation(user: User) -> None:
 # --- Skills toggle ---
 
 
-async def test_skills_tab_shows_toggles(user: User) -> None:
+async def test_skills_tab_shows_toggles(user: User, tmp_path: Path) -> None:
     catalog = SkillCatalog({
         "greet": make_skill("greet", "Greeting skill", active=True),
         "search": make_skill("search", "Search skill", active=False),
     })
     session = Session(provider=FakeProvider(), catalog=catalog)
+    project_store = make_project_store(tmp_path)
 
     @ui.page("/")
     async def page() -> None:
-        await layout.render(session)
+        await layout.render(session, project_store=project_store)
 
     await user.open("/")
     user.find(marker="skills-tab").click()
@@ -94,6 +103,7 @@ async def test_skills_tab_shows_toggles(user: User) -> None:
 
 async def test_session_list_renders(user: User, tmp_path: Path) -> None:
     store = make_store(tmp_path)
+    project_store = make_project_store(tmp_path)
     store.save_sync("s1", [Message(role="user", content="First chat")])
     store.save_sync("target", [
         Message(role="user", content="Loaded question"),
@@ -104,7 +114,7 @@ async def test_session_list_renders(user: User, tmp_path: Path) -> None:
 
     @ui.page("/")
     async def page() -> None:
-        await layout.render(session, store)
+        await layout.render(session, store, project_store=project_store)
 
     await user.open("/")
     await user.should_see("First chat")
@@ -117,12 +127,13 @@ async def test_session_list_renders(user: User, tmp_path: Path) -> None:
 async def test_new_chat_resets_session(user: User, tmp_path: Path) -> None:
     """Cover layout.py lines 29-31: on_session_switch closure via New Chat."""
     store = make_store(tmp_path)
+    project_store = make_project_store(tmp_path)
     session = Session(provider=FakeProvider())
     session.messages = [Message(role="user", content="Old message")]
 
     @ui.page("/")
     async def page() -> None:
-        await layout.render(session, store)
+        await layout.render(session, store, project_store=project_store)
 
     await user.open("/")
     user.find(marker="new-chat-btn").click()
@@ -134,15 +145,16 @@ async def test_new_chat_resets_session(user: User, tmp_path: Path) -> None:
 # --- Provider dropdown ---
 
 
-async def test_provider_change_clears_messages(user: User) -> None:
+async def test_provider_change_clears_messages(user: User, tmp_path: Path) -> None:
     """Cover layout.py lines 34-40: on_provider_change closure."""
     config = two_provider_config(second="cloud-gpt")
     session = Session(provider=FakeProvider())
     session.messages = [Message(role="user", content="Before switch")]
+    project_store = make_project_store(tmp_path)
 
     @ui.page("/")
     async def page() -> None:
-        await layout.render(session, config=config)
+        await layout.render(session, config=config, project_store=project_store)
 
     await user.open("/")
     # NiceGUI's User fixture has no high-level API for changing ui.select
@@ -158,6 +170,7 @@ async def test_provider_change_saves_messages(user: User, tmp_path: Path) -> Non
     config = two_provider_config(second="cloud-gpt")
     store = make_store(tmp_path)
     store.save_background = Mock()
+    project_store = make_project_store(tmp_path)
 
     session = Session(provider=FakeProvider())
     session.messages = [Message(role="user", content="Save me")]
@@ -165,7 +178,9 @@ async def test_provider_change_saves_messages(user: User, tmp_path: Path) -> Non
 
     @ui.page("/")
     async def page() -> None:
-        await layout.render(session, store, config=config)
+        await layout.render(
+            session, store, config=config, project_store=project_store
+        )
 
     await user.open("/")
     select_element = next(iter(user.find(marker="provider-select").elements))
@@ -177,13 +192,16 @@ async def test_provider_change_saves_messages(user: User, tmp_path: Path) -> Non
     assert session.messages == []
 
 
-async def test_provider_dropdown_renders_with_config(user: User) -> None:
+async def test_provider_dropdown_renders_with_config(
+    user: User, tmp_path: Path
+) -> None:
     config = two_provider_config(second="cloud-gpt")
     session = Session(provider=FakeProvider())
+    project_store = make_project_store(tmp_path)
 
     @ui.page("/")
     async def page() -> None:
-        await layout.render(session, config=config)
+        await layout.render(session, config=config, project_store=project_store)
 
     await user.open("/")
     await user.should_see("Stoiquent")
