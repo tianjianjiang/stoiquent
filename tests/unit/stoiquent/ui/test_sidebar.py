@@ -707,8 +707,65 @@ async def test_update_project_handles_save_failure(
         saved = await sidebar_ref[0]._update_project(record, "New", "/tmp/a", "")
     assert saved is False
     mock_notify.assert_called_once_with("Failed to update project", type="warning")
-    assert "Failed to update project p1" in caplog.text
+    # Log message now uniformly "Failed to save project %s" since F4
+    # consolidated the log+notify pair into _persist_project_record.
+    assert "Failed to save project p1" in caplog.text
     caplog.clear()
+
+
+@pytest.mark.asyncio
+async def test_update_project_leaves_unrelated_active_session_untouched(
+    user: User, tmp_path: Path
+) -> None:
+    """False-branch regression for `if self._session.project_id == record.id`
+    in `_update_project`. Editing project B while the active session is
+    bound to project A must NOT route a SessionSwitch nor alter A's
+    instructions. Pre-F4 only the TRUE branch was covered, so a typo
+    flipping `==` to `!=` would silently clobber unrelated session state
+    on every project edit.
+    """
+    session = Session(provider=FakeProvider())
+    session.project_id = "projA"
+    session.project_instructions = "A-only guidance"
+    store = make_store(tmp_path)
+    project_store = make_project_store(tmp_path)
+    rec_a = ProjectRecord(
+        id="projA", name="A", folder="/tmp/a", instructions="A-only guidance"
+    )
+    rec_b = ProjectRecord(
+        id="projB", name="B", folder="/tmp/b", instructions="B-only"
+    )
+    project_store.save_sync(rec_a)
+    project_store.save_sync(rec_b)
+
+    switches: list[SessionSwitch] = []
+
+    def on_switch(switch: SessionSwitch) -> None:
+        switches.append(switch)
+
+    sidebar_ref: list[Sidebar] = []
+
+    @ui.page("/test-update-unrelated")
+    async def page() -> None:
+        s = Sidebar(session, store, on_switch, project_store)
+        sidebar_ref.append(s)
+        await s.render()
+
+    await user.open("/test-update-unrelated")
+    saved = await sidebar_ref[0]._update_project(
+        rec_b, "B Renamed", "/tmp/b", "B-new-instructions"
+    )
+
+    assert saved is True
+    # B's record was updated…
+    refreshed = project_store.load("projB")
+    assert refreshed is not None
+    assert refreshed.name == "B Renamed"
+    assert refreshed.instructions == "B-new-instructions"
+    # …but the active session (bound to A) was not re-routed.
+    assert switches == []
+    assert session.project_id == "projA"
+    assert session.project_instructions == "A-only guidance"
 
 
 @pytest.mark.asyncio
@@ -1686,5 +1743,48 @@ async def test_open_delete_project_dialog_pluralizes(
 
     await user.open("/test-delete-dialog-plural")
     await user.should_see("This will also delete 2 conversations.")
+
+
+@pytest.mark.asyncio
+async def test_delete_project_dialog_cancel_button_leaves_state_untouched(
+    user: User, tmp_path: Path
+) -> None:
+    """Locks item 5: clicking Cancel on the delete confirmation dialog
+    must not invoke `_delete_project` — the project record, conversations,
+    and active state must all survive. Pre-F4 only the Delete-button path
+    was covered, so a regression swapping the Cancel handler to the
+    confirm path would pass CI silently.
+    """
+    session = Session(provider=FakeProvider())
+    session.project_id = "p1"
+    session.project_instructions = "keep"
+    store = make_store(tmp_path)
+    store.save_sync("c1", [Message(role="user", content="a")], project_id="p1")
+    project_store = make_project_store(tmp_path)
+    project_store.save_sync(
+        ProjectRecord(id="p1", name="Alpha", folder="/tmp/a", instructions="keep")
+    )
+
+    sidebar_ref: list[Sidebar] = []
+
+    @ui.page("/test-delete-dialog-cancel")
+    async def page() -> None:
+        s = Sidebar(session, store, lambda *_: None, project_store)
+        s._active_project_id = "p1"
+        sidebar_ref.append(s)
+        await s.render()
+        await s._open_delete_project_dialog("p1")
+
+    await user.open("/test-delete-dialog-cancel")
+    await user.should_see("Delete 'Alpha'?")
+    user.find("Cancel").click()
+    # Dialog close is in-flight; give the event loop a tick.
+    await user.should_see("Alpha")  # project row still visible post-cancel
+
+    assert project_store.load("p1") is not None
+    assert {s.id for s in store.list_conversations()} == {"c1"}
+    assert sidebar_ref[0]._active_project_id == "p1"
+    assert session.project_id == "p1"
+    assert session.project_instructions == "keep"
 
 
