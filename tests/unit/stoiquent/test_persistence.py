@@ -252,6 +252,31 @@ async def test_save_background_logs_and_does_not_raise_on_async_failure(
     )
 
 
+def test_save_background_logs_on_sync_fallback_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store = _make_store(tmp_path)
+
+    def _raise(
+        _session_id: str,
+        _messages: list[Message],
+        _project_id: str | None = None,
+    ) -> None:
+        raise OSError("simulated save failure")
+
+    monkeypatch.setattr(store, "save_sync", _raise)
+
+    with caplog.at_level("ERROR", logger="stoiquent.persistence"):
+        store.save_background("bg_sync_fail", _sample_messages())
+
+    assert any(
+        "sync fallback" in r.message and "bg_sync_fail" in r.message
+        for r in caplog.records
+    )
+
+
 async def test_list_conversations_async_filters_by_project(tmp_path: Path) -> None:
     store = _make_store(tmp_path)
     store.save_sync("a", _sample_messages(), project_id="p1")
