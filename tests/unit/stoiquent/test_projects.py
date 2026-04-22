@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from pathlib import Path
 from typing import Any
@@ -8,7 +9,13 @@ from typing import Any
 import pytest
 
 from stoiquent.models import PersistenceConfig
-from stoiquent.projects import ProjectRecord, ProjectStore, ProjectSummary
+from stoiquent.projects import (
+    ProjectDeleteResult,
+    ProjectLoadError,
+    ProjectRecord,
+    ProjectStore,
+    ProjectSummary,
+)
 
 
 def _make_store(tmp_path: Path) -> ProjectStore:
@@ -121,20 +128,35 @@ def test_save_sync_cleans_up_fd_on_os_write_failure(
     assert remaining == []
 
 
-def test_save_sync_over_corrupt_existing_file(tmp_path: Path) -> None:
-    """save_sync must recover when the target file is corrupt, not raise."""
+def test_save_sync_over_corrupt_existing_file(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """save_sync must recover when the target file is corrupt, not raise.
+
+    Silently overwriting a damaged on-disk record is an irreversible
+    data-loss event (created_at from the prior record is unrecoverable),
+    so save_sync MUST log the decision loudly — this is the only
+    breadcrumb a future operator has to explain a post-repair mismatch.
+    """
     store = _make_store(tmp_path)
     corrupt_path = tmp_path / "projects" / "proj1.json"
     corrupt_path.write_text("{not valid json", encoding="utf-8")
 
     sample = _sample_project()
-    store.save_sync(sample)
+    with caplog.at_level(logging.WARNING, logger="stoiquent.projects"):
+        store.save_sync(sample)
 
     loaded = store.load("proj1")
     assert loaded is not None
     assert loaded.id == "proj1"
     # created_at is taken from the caller (not carried over from corrupt file).
     assert loaded.created_at == sample.created_at
+    # Loud warning that names the data-loss consequence.
+    assert any(
+        "damaged on-disk copy" in r.message
+        and "created_at from the prior record cannot be recovered" in r.message
+        for r in caplog.records
+    ), "expected WARNING log naming the data-loss consequence"
 
 
 def test_save_sync_regenerates_created_at_when_existing_fails_schema(
@@ -200,12 +222,64 @@ def test_load_returns_none_for_missing_id(tmp_path: Path) -> None:
     assert store.load("nonexistent") is None
 
 
-def test_load_returns_none_for_corrupt_json(tmp_path: Path) -> None:
+def test_load_raises_on_corrupt_json(tmp_path: Path) -> None:
+    """Tri-state contract: corrupt file is 'damaged', not 'missing'.
+
+    Callers rendering 'Project not found' on a corrupt file would mislead
+    users into deleting and re-creating data they could otherwise repair.
+    """
     store = _make_store(tmp_path)
     corrupt_path = tmp_path / "projects" / "bad.json"
     corrupt_path.write_text("{invalid json", encoding="utf-8")
 
-    assert store.load("bad") is None
+    with pytest.raises(ProjectLoadError):
+        store.load("bad")
+
+
+def test_load_raises_on_schema_invalid_json(tmp_path: Path) -> None:
+    store = _make_store(tmp_path)
+    invalid_path = tmp_path / "projects" / "invalid.json"
+    invalid_path.write_text('{"id": "invalid"}', encoding="utf-8")  # missing required fields
+
+    with pytest.raises(ProjectLoadError):
+        store.load("invalid")
+
+
+def test_load_raises_on_os_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = _make_store(tmp_path)
+    store.save_sync(_sample_project())
+
+    def _raise(self: Path, *args: object, **kwargs: object) -> str:
+        raise PermissionError("simulated read denied")
+
+    monkeypatch.setattr(Path, "read_text", _raise)
+    with pytest.raises(ProjectLoadError):
+        store.load("proj1")
+
+
+def test_load_classifies_toctou_delete_as_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If `read_text` raises FileNotFoundError (e.g. TOCTOU delete
+    between exists() and read_text()), classify as 'not found' rather
+    than raising ProjectLoadError — matches the exists()-was-false
+    case, avoids spurious 'damaged' toasts on a race.
+
+    Also locks except-ordering: FileNotFoundError is an OSError
+    subclass, so if a future refactor swaps the except blocks, this
+    test's PermissionError-via-monkeypatch counterpart
+    (test_load_raises_on_os_error) would pass, but THIS test would
+    fail — making the ordering dependency observable."""
+    store = _make_store(tmp_path)
+    store.save_sync(_sample_project())
+
+    def _raise_not_found(self: Path, *args: object, **kwargs: object) -> str:
+        raise FileNotFoundError(2, "No such file or directory")
+
+    monkeypatch.setattr(Path, "read_text", _raise_not_found)
+    assert store.load("proj1") is None
 
 
 # --- ProjectStore: list_projects ---
@@ -288,23 +362,64 @@ def test_list_projects_skips_id_filename_mismatch(tmp_path: Path) -> None:
 # --- ProjectStore: delete ---
 
 
-def test_delete_removes_file(tmp_path: Path) -> None:
+def test_delete_returns_deleted_when_file_removed(tmp_path: Path) -> None:
     store = _make_store(tmp_path)
     store.save_sync(_sample_project())
 
-    assert store.delete("proj1") is True
+    assert store.delete("proj1") is ProjectDeleteResult.DELETED
     assert not (tmp_path / "projects" / "proj1.json").exists()
 
 
-def test_delete_returns_false_for_missing(tmp_path: Path) -> None:
+def test_delete_returns_already_gone_when_missing(tmp_path: Path) -> None:
+    """Tri-state contract: idempotent delete distinguishes 'was-removed' from
+    'already-gone' so callers can silently succeed on race-with-concurrent-delete."""
     store = _make_store(tmp_path)
-    assert store.delete("nonexistent") is False
+    assert store.delete("nonexistent") is ProjectDeleteResult.ALREADY_GONE
 
 
-def test_delete_returns_false_on_os_error(
+def test_delete_logs_breadcrumb_on_already_gone(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """ALREADY_GONE must emit an INFO breadcrumb — in this single-process
+    app it usually signals a bug (phantom entry, double-click, cascade
+    race), not a benign concurrent-delete. The log is owned by
+    ProjectStore.delete so every caller benefits."""
+    store = _make_store(tmp_path)
+    with caplog.at_level(logging.INFO, logger="stoiquent.projects"):
+        result = store.delete("nonexistent")
+    assert result is ProjectDeleteResult.ALREADY_GONE
+    assert any(
+        "already gone at delete time" in r.message and r.levelname == "INFO"
+        for r in caplog.records
+    ), "expected INFO breadcrumb for ALREADY_GONE"
+
+
+def test_load_logs_breadcrumb_on_toctou_delete(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Symmetric with ALREADY_GONE: TOCTOU delete during load emits INFO
+    so cascade-race bugs are diagnosable, not silently shrugged."""
+    store = _make_store(tmp_path)
+    store.save_sync(_sample_project())
+
+    def _raise_not_found(self: Path, *args: object, **kwargs: object) -> str:
+        raise FileNotFoundError(2, "No such file or directory")
+
+    monkeypatch.setattr(Path, "read_text", _raise_not_found)
+    with caplog.at_level(logging.INFO, logger="stoiquent.projects"):
+        result = store.load("proj1")
+    assert result is None
+    assert any(
+        "vanished between exists() and read_text()" in r.message
+        and r.levelname == "INFO"
+        for r in caplog.records
+    ), "expected INFO breadcrumb for TOCTOU"
+
+
+def test_delete_returns_failed_on_os_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """delete must swallow non-FileNotFoundError OSError and return False."""
     store = _make_store(tmp_path)
     store.save_sync(_sample_project())
 
@@ -313,7 +428,7 @@ def test_delete_returns_false_on_os_error(
 
     monkeypatch.setattr(Path, "unlink", _raise)
 
-    assert store.delete("proj1") is False
+    assert store.delete("proj1") is ProjectDeleteResult.FAILED
 
 
 # --- ProjectStore: path traversal ---

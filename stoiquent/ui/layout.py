@@ -68,20 +68,41 @@ async def render(
 def _load_project_instructions(
     project_store: ProjectStore | None, project_id: str | None
 ) -> str:
-    """Return the project's instructions, or '' when the store/id is absent
-    or the project cannot be loaded.
+    """Return the project's instructions, or '' when the store/id is absent,
+    the project is missing, or its file is damaged.
 
-    ``ProjectStore.load`` absorbs its documented expected-failure set
-    (missing file, I/O errors, corrupt JSON, schema errors) and returns
-    ``None``; those route through the ``record is None`` branch. Any other
-    exception is a contract violation and is logged at ERROR with traceback,
-    then swallowed so a session switch is never blocked by a faulty project
-    record.
+    `ProjectStore.load` returns `None` for genuine absence and raises
+    `ProjectLoadError` for corrupt/IO failures. `ProjectLoadError` is
+    logged at WARNING, surfaced to the user via `ui.notify` (so they
+    don't silently get an effectively-projectless session), and absorbed
+    (returns `""`) so the session switch is never blocked. Any other
+    exception is a contract violation: logged at ERROR with traceback,
+    absorbed (returns `""`); the user sees no toast because it indicates
+    a bug rather than an actionable data-damage condition.
+
+    Note on UX asymmetry with sidebar dialog openers (which toast on
+    both damaged and unexpected): dialogs can't proceed without a
+    record, so silent-on-bug would look like a dead button; session
+    switch falls through to a functional (if project-less) chat, so
+    adding a toast here would fire on every switch after a single bug
+    and drown real signal.
     """
+    from stoiquent.projects import ProjectLoadError
+
     if project_store is None or project_id is None:
         return ""
     try:
         record = project_store.load(project_id)
+    except ProjectLoadError:
+        logger.warning(
+            "Project %s exists but could not be loaded; using empty instructions",
+            project_id,
+        )
+        ui.notify(
+            "Project instructions unavailable — project file is damaged",
+            type="warning",
+        )
+        return ""
     except Exception:
         logger.error(
             "Unexpected failure loading project instructions for %s",

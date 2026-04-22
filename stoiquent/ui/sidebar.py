@@ -11,7 +11,7 @@ from pydantic import ValidationError
 
 from stoiquent.agent.session import Session
 from stoiquent.models import Message
-from stoiquent.projects import ProjectRecord
+from stoiquent.projects import ProjectDeleteResult, ProjectLoadError, ProjectRecord
 
 if TYPE_CHECKING:
     from stoiquent.persistence import ConversationStore, ConversationSummary
@@ -275,10 +275,20 @@ class Sidebar:
             return
         await self._refresh_projects()
 
-    def _open_edit_project_dialog(self, project_id: str) -> None:
+    async def _open_edit_project_dialog(self, project_id: str) -> None:
         if self._project_store is None:
             return
-        record = self._project_store.load(project_id)
+        try:
+            record = await self._project_store.load_async(project_id)
+        except ProjectLoadError:
+            ui.notify("Project data is damaged — see logs", type="warning")
+            return
+        except Exception:
+            logger.exception(
+                "Unexpected failure opening edit dialog for %s", project_id
+            )
+            ui.notify("Could not open edit dialog — see logs", type="warning")
+            return
         if record is None:
             ui.notify("Project not found", type="warning")
             return
@@ -336,10 +346,20 @@ class Sidebar:
         await self._refresh_projects()
         await self._refresh_sessions()
 
-    def _open_delete_project_dialog(self, project_id: str) -> None:
+    async def _open_delete_project_dialog(self, project_id: str) -> None:
         if self._project_store is None:
             return
-        record = self._project_store.load(project_id)
+        try:
+            record = await self._project_store.load_async(project_id)
+        except ProjectLoadError:
+            ui.notify("Project data is damaged — see logs", type="warning")
+            return
+        except Exception:
+            logger.exception(
+                "Unexpected failure opening delete dialog for %s", project_id
+            )
+            ui.notify("Could not open delete dialog — see logs", type="warning")
+            return
         if record is None:
             ui.notify("Project not found", type="warning")
             return
@@ -441,11 +461,15 @@ class Sidebar:
                 await self._refresh_projects()
                 await self._refresh_sessions()
                 return
-        if not self._project_store.delete(project_id):
+        delete_result = self._project_store.delete(project_id)
+        if delete_result is ProjectDeleteResult.FAILED:
             ui.notify("Failed to delete project", type="warning")
             await self._refresh_projects()
             await self._refresh_sessions()
             return
+        # Fall-through covers both DELETED and ALREADY_GONE:
+        # desired-state-met, so clear active state. (ProjectStore.delete
+        # logs the ALREADY_GONE breadcrumb for forensics.)
         if self._active_project_id == project_id:
             self._active_project_id = None
         if self._session.project_id == project_id:

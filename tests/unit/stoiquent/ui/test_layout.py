@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from nicegui import ui
@@ -203,7 +203,11 @@ def test_load_project_instructions_swallows_load_exception(
     caplog: pytest.LogCaptureFixture,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Any unexpected store exception must not block a session switch."""
+    """Any unexpected store exception must not block a session switch, and
+    must not fire a toast — contract violations are bug-class, not
+    data-damage; toasting them on every session switch after a bug would
+    drown real signal. Symmetric with the ProjectLoadError test below
+    which DOES toast."""
     store = ProjectStore(PersistenceConfig(data_dir=str(tmp_path)))
     store.ensure_dirs()
 
@@ -211,6 +215,8 @@ def test_load_project_instructions_swallows_load_exception(
         raise RuntimeError("simulated store failure")
 
     monkeypatch.setattr(store, "load", _raise)
+    mock_notify = Mock()
+    monkeypatch.setattr("stoiquent.ui.layout.ui.notify", mock_notify)
 
     with caplog.at_level(logging.ERROR, logger="stoiquent.ui.layout"):
         result = _load_project_instructions(store, "proj1")
@@ -219,6 +225,42 @@ def test_load_project_instructions_swallows_load_exception(
     assert any(
         "Unexpected failure loading project instructions for proj1" in r.message
         for r in caplog.records
+    )
+    mock_notify.assert_not_called()
+
+
+def test_load_project_instructions_returns_empty_on_damaged_file(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tri-state load contract: ProjectLoadError is 'damaged' — logged at
+    WARNING and surfaced via ui.notify, not buried at ERROR as
+    'unexpected failure'."""
+    store = ProjectStore(PersistenceConfig(data_dir=str(tmp_path)))
+    store.ensure_dirs()
+    (tmp_path / "projects" / "proj1.json").write_text("{corrupt", encoding="utf-8")
+
+    mock_notify = Mock()
+    monkeypatch.setattr("stoiquent.ui.layout.ui.notify", mock_notify)
+
+    with caplog.at_level(logging.WARNING, logger="stoiquent.ui.layout"):
+        result = _load_project_instructions(store, "proj1")
+
+    assert result == ""
+    warning_records = [
+        r for r in caplog.records
+        if r.levelname == "WARNING" and r.name == "stoiquent.ui.layout"
+        and "proj1" in r.message
+    ]
+    assert warning_records, "expected a WARNING log from layout about proj1"
+    assert not any(
+        r.levelname == "ERROR" and r.name == "stoiquent.ui.layout"
+        for r in caplog.records
+    )
+    mock_notify.assert_called_once_with(
+        "Project instructions unavailable — project file is damaged",
+        type="warning",
     )
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import enum
 import json
 import logging
 import os
@@ -13,6 +14,34 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from stoiquent.models import SAFE_ID, PersistenceConfig
 
 logger = logging.getLogger(__name__)
+
+
+class ProjectLoadError(Exception):
+    """A project file exists but cannot be parsed or read.
+
+    Distinct from "project not found" (which `load` returns as `None`):
+    this signals damaged JSON, schema-invalid data, or an I/O error on an
+    existing file. Callers should render a "data damaged" message, not
+    "not found", so users can distinguish a delete race from a repair need.
+    """
+
+
+class ProjectDeleteResult(enum.Enum):
+    """Tri-state outcome of `ProjectStore.delete`.
+
+    - `DELETED`: the file was removed by this call.
+    - `ALREADY_GONE`: the file was absent when `delete` ran (idempotent
+      success; `ProjectStore.delete` itself logs an INFO breadcrumb
+      because in a single-process app this usually indicates a bug —
+      phantom sidebar entry, double-call, or cascade-logic issue —
+      rather than a genuine concurrent-delete race). Callers should
+      still treat this as success.
+    - `FAILED`: a real I/O failure; callers should notify the user.
+    """
+
+    DELETED = "deleted"
+    ALREADY_GONE = "already_gone"
+    FAILED = "failed"
 
 
 def _validate_safe_id(v: str) -> str:
@@ -86,7 +115,20 @@ class ProjectStore:
 
         path = self._path_for(project.id)
         if path.exists():
-            existing = self.load(project.id)
+            try:
+                existing = self.load(project.id)
+            except ProjectLoadError:
+                # Existing file is damaged; we will overwrite it rather than
+                # refuse to save. Log loudly because the caller's
+                # created_at wins, destroying whatever the damaged file
+                # held — this is the one place that decision is made.
+                logger.warning(
+                    "Project %s has a damaged on-disk copy; save_sync will "
+                    "overwrite it. created_at from the prior record cannot "
+                    "be recovered.",
+                    project.id,
+                )
+                existing = None
             if existing is not None:
                 project = project.model_copy(
                     update={"created_at": existing.created_at}
@@ -166,21 +208,50 @@ class ProjectStore:
                 )
 
     def load(self, project_id: str) -> ProjectRecord | None:
-        """Load a project by ID. Returns None if not found or corrupt."""
+        """Load a project by ID.
+
+        Returns `None` when the project file is absent — either never
+        existed, or was concurrently deleted during the load (race
+        between `exists()` and `read_text()`).
+
+        Raises:
+            ProjectLoadError: the file exists but cannot be read or
+                parsed (corrupt JSON, schema-invalid data, or I/O
+                failure). Callers should treat this as "data damaged,
+                needs repair", not "not found". Any other exception
+                indicates a bug and should not be caught as part of the
+                normal contract.
+        """
         path = self._path_for(project_id)
         if not path.exists():
             return None
         try:
             data = path.read_text(encoding="utf-8")
             return ProjectRecord.model_validate_json(data)
-        except (json.JSONDecodeError, OSError, ValueError):
+        except FileNotFoundError:
+            # Race: file deleted between exists() and read_text().
+            # Classify as "not found" (matches exists()-was-false).
+            # INFO breadcrumb so concurrent-delete / cascade-race bugs
+            # are diagnosable, mirroring the ALREADY_GONE log in delete().
+            logger.info(
+                "Project %s vanished between exists() and read_text() "
+                "(external edit, stale sidebar cache, or cascade race)",
+                project_id,
+            )
+            return None
+        # This block MUST remain below FileNotFoundError (which is an
+        # OSError subclass) or TOCTOU race deletes would misclassify as
+        # damaged. Guarded by test_load_classifies_toctou_delete_as_missing.
+        except (json.JSONDecodeError, OSError, ValueError) as e:
             logger.warning(
                 "Failed to load project %s", project_id, exc_info=True
             )
-            return None
+            raise ProjectLoadError(
+                f"Project {project_id!r} exists but could not be loaded"
+            ) from e
 
     async def load_async(self, project_id: str) -> ProjectRecord | None:
-        """Async variant of load via thread pool."""
+        """Async variant of load via thread pool. Same exception contract as `load`."""
         return await asyncio.to_thread(self.load, project_id)
 
     def list_projects(self) -> list[ProjectSummary]:
@@ -224,16 +295,27 @@ class ProjectStore:
         """Async variant of list_projects via thread pool."""
         return await asyncio.to_thread(self.list_projects)
 
-    def delete(self, project_id: str) -> bool:
-        """Delete a project file. Returns True if deleted, False if not found or on OS error."""
+    def delete(self, project_id: str) -> ProjectDeleteResult:
+        """Delete a project file. See `ProjectDeleteResult` for the three outcomes.
+
+        unlink success → DELETED; FileNotFoundError → ALREADY_GONE (with
+        INFO breadcrumb — single-process app, so this usually indicates a
+        phantom entry or cascade-logic bug); other OSError → FAILED.
+        """
         path = self._path_for(project_id)
         try:
             path.unlink()
-            return True
+            return ProjectDeleteResult.DELETED
         except FileNotFoundError:
-            return False
+            logger.info(
+                "Project %s was already gone at delete time "
+                "(external edit, stale sidebar cache, concurrent double-click, "
+                "or cascade-logic bug)",
+                project_id,
+            )
+            return ProjectDeleteResult.ALREADY_GONE
         except OSError:
             logger.warning(
                 "Failed to delete project %s", project_id, exc_info=True
             )
-            return False
+            return ProjectDeleteResult.FAILED
