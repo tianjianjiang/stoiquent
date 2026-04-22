@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import time
 from pathlib import Path
@@ -210,7 +209,7 @@ def test_list_conversations_unfiltered_returns_all(tmp_path: Path) -> None:
 async def test_save_background_preserves_project_id(tmp_path: Path) -> None:
     store = _make_store(tmp_path)
     store.save_background("bg1", _sample_messages(), project_id="p1")
-    await asyncio.gather(*store._pending_tasks)
+    await store.drain_pending()
 
     record = store.load("bg1")
     assert record is not None
@@ -221,11 +220,61 @@ async def test_save_background_preserves_none_project_id(tmp_path: Path) -> None
     """Non-None session.project_id must round-trip; None remains None."""
     store = _make_store(tmp_path)
     store.save_background("bg_none", _sample_messages())
-    await asyncio.gather(*store._pending_tasks)
+    await store.drain_pending()
 
     record = store.load("bg_none")
     assert record is not None
     assert record.project_id is None
+
+
+async def test_save_background_logs_and_does_not_raise_on_async_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store = _make_store(tmp_path)
+
+    def _raise(
+        _session_id: str,
+        _messages: list[Message],
+        _project_id: str | None = None,
+    ) -> None:
+        raise OSError("simulated save failure")
+
+    monkeypatch.setattr(store, "save_sync", _raise)
+
+    with caplog.at_level("ERROR", logger="stoiquent.persistence"):
+        store.save_background("bg_fail", _sample_messages())
+        await store.drain_pending()
+
+    assert any(
+        "Failed to save conversation bg_fail" in r.message for r in caplog.records
+    )
+
+
+def test_save_background_logs_on_sync_fallback_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    store = _make_store(tmp_path)
+
+    def _raise(
+        _session_id: str,
+        _messages: list[Message],
+        _project_id: str | None = None,
+    ) -> None:
+        raise OSError("simulated save failure")
+
+    monkeypatch.setattr(store, "save_sync", _raise)
+
+    with caplog.at_level("ERROR", logger="stoiquent.persistence"):
+        store.save_background("bg_sync_fail", _sample_messages())
+
+    assert any(
+        "sync fallback" in r.message and "bg_sync_fail" in r.message
+        for r in caplog.records
+    )
 
 
 async def test_list_conversations_async_filters_by_project(tmp_path: Path) -> None:
@@ -586,9 +635,7 @@ async def test_list_conversations_async(tmp_path: Path) -> None:
 async def test_save_background_completes_without_error(tmp_path: Path) -> None:
     store = _make_store(tmp_path)
     store.save_background("bg123", _sample_messages())
-
-    # Give the background task time to complete
-    await asyncio.sleep(0.1)
+    await store.drain_pending()
 
     path = tmp_path / "conversations" / "bg123.json"
     assert path.exists()

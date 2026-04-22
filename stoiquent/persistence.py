@@ -159,6 +159,16 @@ class ConversationStore:
         """Async save via thread pool."""
         await asyncio.to_thread(self.save_sync, session_id, messages, project_id)
 
+    async def drain_pending(self) -> None:
+        """Await save_background tasks pending at call time.
+
+        Exceptions from individual tasks are suppressed (they are already
+        logged inside save_background). Tasks scheduled after this call
+        begins awaiting are not drained.
+        """
+        if self._pending_tasks:
+            await asyncio.gather(*self._pending_tasks, return_exceptions=True)
+
     def save_background(
         self,
         session_id: str,
