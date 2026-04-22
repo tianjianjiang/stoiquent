@@ -54,6 +54,9 @@ def start(config: AppConfig) -> None:
             f"{config.persistence.data_dir}: {e}"
         ) from e
 
+    app.on_shutdown(store.drain_pending)
+    app.on_shutdown(project_store.drain_pending)
+
     @ui.page("/")
     async def _main_page() -> None:  # pragma: no cover
         await layout.render(session, store, config, project_store)

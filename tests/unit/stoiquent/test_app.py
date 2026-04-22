@@ -90,6 +90,32 @@ def test_should_register_shutdown_hook() -> None:
         assert mock_app.on_shutdown.call_count >= 1
 
 
+def test_should_drain_pending_store_writes_on_shutdown() -> None:
+    """Both stores' drain_pending must be registered on app.on_shutdown so that
+    in-flight save_background tasks finish before NiceGUI tears the loop down.
+    Without this, chat messages / project edits saved shortly before close can
+    be lost.
+    """
+    config = AppConfig(
+        providers={"p": ProviderConfig(base_url="http://x", model="m")},
+        default_provider="p",
+    )
+    with patch("stoiquent.app.ui") as mock_ui, \
+         patch("stoiquent.app.app") as mock_app, \
+         patch("stoiquent.app.ConversationStore") as mock_conv_store_cls, \
+         patch("stoiquent.app.ProjectStore") as mock_project_store_cls:
+        mock_ui.run = MagicMock()
+        mock_ui.page = MagicMock(return_value=lambda f: f)
+
+        from stoiquent.app import start
+
+        start(config)
+
+        registered = [call.args[0] for call in mock_app.on_shutdown.call_args_list]
+        assert mock_conv_store_cls.return_value.drain_pending in registered
+        assert mock_project_store_cls.return_value.drain_pending in registered
+
+
 def test_should_raise_systemexit_when_project_store_ensure_dirs_fails() -> None:
     config = AppConfig(
         providers={"p": ProviderConfig(base_url="http://x", model="m")},
