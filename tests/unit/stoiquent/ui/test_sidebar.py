@@ -1764,6 +1764,15 @@ async def test_delete_project_dialog_cancel_button_leaves_state_untouched(
     project_store.save_sync(
         ProjectRecord(id="p1", name="Alpha", folder="/tmp/a", instructions="keep")
     )
+    # Spy on the destructive calls so Cancel's "did nothing" contract is
+    # observed at the interface level, not only by absence of mutation.
+    # A refactor that swapped `on_click=dialog.close` for a no-op AND also
+    # failed to wire Delete would still leak state but pass the mutation
+    # asserts; the spy pins the stronger "nothing routed to the store".
+    project_store.delete = Mock(wraps=project_store.delete)
+    store.delete_by_project_async = AsyncMock(
+        wraps=store.delete_by_project_async
+    )
 
     sidebar_ref: list[Sidebar] = []
 
@@ -1778,9 +1787,9 @@ async def test_delete_project_dialog_cancel_button_leaves_state_untouched(
     await user.open("/test-delete-dialog-cancel")
     await user.should_see("Delete 'Alpha'?")
     user.find("Cancel").click()
-    # Dialog close is in-flight; give the event loop a tick.
-    await user.should_see("Alpha")  # project row still visible post-cancel
 
+    project_store.delete.assert_not_called()
+    store.delete_by_project_async.assert_not_called()
     assert project_store.load("p1") is not None
     assert {s.id for s in store.list_conversations()} == {"c1"}
     assert sidebar_ref[0]._active_project_id == "p1"
