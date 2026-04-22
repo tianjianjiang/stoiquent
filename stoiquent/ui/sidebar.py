@@ -21,7 +21,13 @@ logger = logging.getLogger(__name__)
 
 OnSessionSwitch = Callable[[str, list[Message], str | None], None]
 
-_UNGROUPED_LABEL = "Ungrouped"
+_UNGROUPED_LABEL = "— Ungrouped"
+"""Session-group header for conversations with no project or a deleted/missing one.
+
+Prefixed with an em-dash so a user who literally names a project "Ungrouped"
+renders as a distinct group from this bucket. Without the prefix the two
+groups share a header and read as a single list.
+"""
 
 
 class Sidebar:
@@ -32,7 +38,7 @@ class Sidebar:
         session: Session,
         store: ConversationStore | None,
         on_session_switch: OnSessionSwitch,
-        project_store: ProjectStore | None = None,
+        project_store: ProjectStore,
     ) -> None:
         self._session = session
         self._store = store
@@ -41,6 +47,10 @@ class Sidebar:
         self._sessions_container: ui.column | None = None
         self._projects_container: ui.column | None = None
         self._active_project_id: str | None = None
+        # Optimistic baseline: a fresh sidebar has no known failure.
+        # Flips to False on the first _list_projects_safe failure so a
+        # recovery toast can be suppressed until the next transition.
+        self._projects_load_healthy: bool = True
 
     async def render(self) -> None:
         with ui.tabs().classes("w-full").mark("sidebar-tabs") as tabs:
@@ -156,30 +166,31 @@ class Sidebar:
         """Return the current project list, or ``[]`` if loading fails.
 
         Failures here collapse projects-tab rendering AND session grouping
-        (every project-tagged conversation is rendered under "Ungrouped"
-        until the next successful load). Logged at ERROR; there is no
-        dedicated UI banner today, so operators need to watch logs to
-        tell "empty" from "failed".
+        (every project-tagged conversation is rendered under Ungrouped until
+        the next successful load). To keep users in the loop without spamming,
+        this method fires ``ui.notify`` only on the healthy→failed transition
+        tracked by ``self._projects_load_healthy``. Successful loads clear the
+        flag so the next failure re-notifies.
         """
-        if self._project_store is None:
-            return []
         try:
-            return await self._project_store.list_projects_async()
+            projects = await self._project_store.list_projects_async()
         except (OSError, json.JSONDecodeError, ValidationError):
             logger.error("Failed to load projects", exc_info=True)
+            if self._projects_load_healthy:
+                self._projects_load_healthy = False
+                ui.notify(
+                    "Could not load projects — sessions may appear ungrouped. "
+                    "Check logs.",
+                    type="warning",
+                )
             return []
+        self._projects_load_healthy = True
+        return projects
 
     async def _refresh_projects(self) -> None:
         if self._projects_container is None:
             return
         self._projects_container.clear()
-
-        if self._project_store is None:
-            with self._projects_container:
-                ui.label("No project store configured").classes(
-                    "text-caption opacity-40"
-                )
-            return
 
         projects = await self._list_projects_safe()
         with self._projects_container:
@@ -225,8 +236,6 @@ class Sidebar:
         await self._refresh_projects()
 
     def _open_new_project_dialog(self) -> None:
-        if self._project_store is None:
-            return
         with ui.dialog() as dialog, ui.card().classes("min-w-80"):
             ui.label("New Project").classes("text-h6")
             name_input = ui.input("Name").classes("w-full").mark("new-project-name")
@@ -243,26 +252,31 @@ class Sidebar:
                 ui.button("Cancel", on_click=dialog.close).props("flat")
 
                 async def _save() -> None:
-                    await self._create_project(
+                    saved = await self._create_project(
                         name_input.value or "",
                         folder_input.value or "",
                         instructions_input.value or "",
                     )
-                    dialog.close()
+                    if saved:
+                        dialog.close()
 
                 ui.button("Create", on_click=_save).mark("new-project-save")
         dialog.open()
 
     async def _create_project(
         self, name: str, folder: str, instructions: str
-    ) -> None:
-        if self._project_store is None:
-            return
+    ) -> bool:
+        """Persist a new project; return True iff saved.
+
+        False result tells the caller's dialog to stay open so the user can
+        correct the validation or retry after a save failure without
+        re-entering every field.
+        """
         name = name.strip()
         folder = folder.strip()
         if not name or not folder:
             ui.notify("Name and folder are required", type="warning")
-            return
+            return False
         project_id = uuid.uuid4().hex[:8]
         record = ProjectRecord(
             id=project_id, name=name, folder=folder, instructions=instructions
@@ -272,12 +286,11 @@ class Sidebar:
         except OSError:
             logger.error("Failed to save project %s", project_id, exc_info=True)
             ui.notify("Failed to create project", type="warning")
-            return
+            return False
         await self._refresh_projects()
+        return True
 
     async def _open_edit_project_dialog(self, project_id: str) -> None:
-        if self._project_store is None:
-            return
         try:
             record = await self._project_store.load_async(project_id)
         except ProjectLoadError:
@@ -305,13 +318,14 @@ class Sidebar:
                 ui.button("Cancel", on_click=dialog.close).props("flat")
 
                 async def _save() -> None:
-                    await self._update_project(
+                    saved = await self._update_project(
                         record,
                         name_input.value or "",
                         folder_input.value or "",
                         instructions_input.value or "",
                     )
-                    dialog.close()
+                    if saved:
+                        dialog.close()
 
                 ui.button("Save", on_click=_save).mark(f"save-project-{project_id}")
         dialog.open()
@@ -322,14 +336,18 @@ class Sidebar:
         name: str,
         folder: str,
         instructions: str,
-    ) -> None:
-        if self._project_store is None:
-            return
+    ) -> bool:
+        """Persist edits to an existing project; return True iff saved.
+
+        False result tells the caller's dialog to stay open so the user can
+        correct the validation or retry after a save failure without
+        re-entering every field.
+        """
         name = name.strip()
         folder = folder.strip()
         if not name or not folder:
             ui.notify("Name and folder are required", type="warning")
-            return
+            return False
         updated = record.model_copy(
             update={"name": name, "folder": folder, "instructions": instructions}
         )
@@ -338,17 +356,16 @@ class Sidebar:
         except OSError:
             logger.error("Failed to update project %s", record.id, exc_info=True)
             ui.notify("Failed to update project", type="warning")
-            return
+            return False
         # If the active session belongs to this project, refresh its instructions
         # so the next agent turn sees the new prompt immediately.
         if self._session.project_id == record.id:
             self._session.project_instructions = updated.instructions
         await self._refresh_projects()
         await self._refresh_sessions()
+        return True
 
     async def _open_delete_project_dialog(self, project_id: str) -> None:
-        if self._project_store is None:
-            return
         try:
             record = await self._project_store.load_async(project_id)
         except ProjectLoadError:
@@ -419,8 +436,6 @@ class Sidebar:
         survives and the cascade can be retried; orphaned conversations
         would violate the invariant.
         """
-        if self._project_store is None:
-            return
         if self._store is not None:
             try:
                 result = await self._store.delete_by_project_async(project_id)

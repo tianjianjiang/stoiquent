@@ -30,7 +30,7 @@ async def test_should_render_session_and_skills_tabs(
 
     @ui.page("/test-tabs")
     async def page() -> None:
-        sidebar = Sidebar(session, store, lambda *_: None)
+        sidebar = Sidebar(session, store, lambda *_: None, make_project_store(tmp_path))
         await sidebar.render()
 
     await user.open("/test-tabs")
@@ -47,7 +47,7 @@ async def test_should_show_new_chat_button(
 
     @ui.page("/test-new")
     async def page() -> None:
-        sidebar = Sidebar(session, store, lambda *_: None)
+        sidebar = Sidebar(session, store, lambda *_: None, make_project_store(tmp_path))
         await sidebar.render()
 
     await user.open("/test-new")
@@ -66,7 +66,7 @@ async def test_should_list_sessions_from_store(
 
     @ui.page("/test-list")
     async def page() -> None:
-        sidebar = Sidebar(session, store, lambda *_: None)
+        sidebar = Sidebar(session, store, lambda *_: None, make_project_store(tmp_path))
         await sidebar.render()
 
     await user.open("/test-list")
@@ -75,7 +75,7 @@ async def test_should_list_sessions_from_store(
 
 
 @pytest.mark.asyncio
-async def test_should_show_skills_with_toggles(user: User) -> None:
+async def test_should_show_skills_with_toggles(user: User, tmp_path: Path) -> None:
     catalog = SkillCatalog({
         "greet": make_skill("greet", "Greeting skill", active=True),
         "search": make_skill("search", "Search skill", active=False),
@@ -84,7 +84,7 @@ async def test_should_show_skills_with_toggles(user: User) -> None:
 
     @ui.page("/test-skills")
     async def page() -> None:
-        sidebar = Sidebar(session, None, lambda *_: None)
+        sidebar = Sidebar(session, None, lambda *_: None, make_project_store(tmp_path))
         await sidebar.render()
 
     await user.open("/test-skills")
@@ -95,12 +95,12 @@ async def test_should_show_skills_with_toggles(user: User) -> None:
 
 
 @pytest.mark.asyncio
-async def test_should_show_no_skills_message(user: User) -> None:
+async def test_should_show_no_skills_message(user: User, tmp_path: Path) -> None:
     session = Session(provider=FakeProvider())
 
     @ui.page("/test-no-skills")
     async def page() -> None:
-        sidebar = Sidebar(session, None, lambda *_: None)
+        sidebar = Sidebar(session, None, lambda *_: None, make_project_store(tmp_path))
         await sidebar.render()
 
     await user.open("/test-no-skills")
@@ -108,13 +108,13 @@ async def test_should_show_no_skills_message(user: User) -> None:
 
 
 @pytest.mark.asyncio
-async def test_should_show_empty_catalog_message(user: User) -> None:
+async def test_should_show_empty_catalog_message(user: User, tmp_path: Path) -> None:
     catalog = SkillCatalog({})
     session = Session(provider=FakeProvider(), catalog=catalog)
 
     @ui.page("/test-empty-catalog")
     async def page() -> None:
-        sidebar = Sidebar(session, None, lambda *_: None)
+        sidebar = Sidebar(session, None, lambda *_: None, make_project_store(tmp_path))
         await sidebar.render()
 
     await user.open("/test-empty-catalog")
@@ -137,7 +137,7 @@ async def test_new_session_calls_callback(
 
     @ui.page("/test-new-session")
     async def page() -> None:
-        s = Sidebar(session, store, on_switch)
+        s = Sidebar(session, store, on_switch, make_project_store(tmp_path))
         sidebar_ref.append(s)
         await s.render()
 
@@ -165,7 +165,7 @@ async def test_load_session_calls_callback(
 
     @ui.page("/test-load")
     async def page() -> None:
-        s = Sidebar(session, store, on_switch)
+        s = Sidebar(session, store, on_switch, make_project_store(tmp_path))
         sidebar_ref.append(s)
         await s.render()
 
@@ -193,7 +193,7 @@ async def test_load_nonexistent_session_does_not_switch(
 
     @ui.page("/test-load-missing")
     async def page() -> None:
-        s = Sidebar(session, store, on_switch)
+        s = Sidebar(session, store, on_switch, make_project_store(tmp_path))
         sidebar_ref.append(s)
         await s.render()
 
@@ -205,7 +205,7 @@ async def test_load_nonexistent_session_does_not_switch(
 
 
 @pytest.mark.asyncio
-async def test_toggle_skill(user: User) -> None:
+async def test_toggle_skill(user: User, tmp_path: Path) -> None:
     catalog = SkillCatalog({
         "greet": make_skill("greet", "Greeting", active=False),
     })
@@ -215,7 +215,7 @@ async def test_toggle_skill(user: User) -> None:
 
     @ui.page("/test-toggle")
     async def page() -> None:
-        s = Sidebar(session, None, lambda *_: None)
+        s = Sidebar(session, None, lambda *_: None, make_project_store(tmp_path))
         sidebar_ref.append(s)
         await s.render()
 
@@ -227,7 +227,7 @@ async def test_toggle_skill(user: User) -> None:
     assert catalog.skills["greet"].active is False
 
 
-async def test_toggle_nonexistent_skill(user: User) -> None:
+async def test_toggle_nonexistent_skill(user: User, tmp_path: Path) -> None:
     catalog = SkillCatalog({
         "greet": make_skill("greet", "Greeting", active=False),
     })
@@ -237,7 +237,7 @@ async def test_toggle_nonexistent_skill(user: User) -> None:
 
     @ui.page("/test-toggle-fail")
     async def page() -> None:
-        s = Sidebar(session, None, lambda *_: None)
+        s = Sidebar(session, None, lambda *_: None, make_project_store(tmp_path))
         sidebar_ref.append(s)
         await s.render()
 
@@ -264,7 +264,7 @@ async def test_refresh_sessions_handles_load_failure(
 
     @ui.page("/test-refresh-fail")
     async def page() -> None:
-        s = Sidebar(session, store, lambda *_: None)
+        s = Sidebar(session, store, lambda *_: None, make_project_store(tmp_path))
         sidebar_ref.append(s)
         await s.render()
 
@@ -292,7 +292,7 @@ async def test_load_session_handles_exception(
 
     @ui.page("/test-load-exception")
     async def page() -> None:
-        s = Sidebar(session, store, on_switch)
+        s = Sidebar(session, store, on_switch, make_project_store(tmp_path))
         sidebar_ref.append(s)
         await s.render()
 
@@ -310,7 +310,7 @@ async def test_load_session_handles_exception(
     )
 
 
-async def test_load_session_with_none_store(user: User) -> None:
+async def test_load_session_with_none_store(user: User, tmp_path: Path) -> None:
     """Cover sidebar.py:77: _load_session early return when store is None."""
     session = Session(provider=FakeProvider())
     received: list[tuple[str, list]] = []
@@ -319,7 +319,12 @@ async def test_load_session_with_none_store(user: User) -> None:
 
     @ui.page("/test-load-none-store")
     async def page() -> None:
-        s = Sidebar(session, None, lambda *_: received.append(("x", [])))
+        s = Sidebar(
+            session,
+            None,
+            lambda *_: received.append(("x", [])),
+            make_project_store(tmp_path),
+        )
         sidebar_ref.append(s)
         await s.render()
 
@@ -350,7 +355,7 @@ async def test_load_session_saves_old_messages(
 
     @ui.page("/test-load-saves")
     async def page() -> None:
-        s = Sidebar(session, store, on_switch)
+        s = Sidebar(session, store, on_switch, make_project_store(tmp_path))
         sidebar_ref.append(s)
         await s.render()
 
@@ -364,7 +369,7 @@ async def test_load_session_saves_old_messages(
     assert received[0][0] == "target"
 
 
-async def test_toggle_skill_notifies_on_failure(user: User) -> None:
+async def test_toggle_skill_notifies_on_failure(user: User, tmp_path: Path) -> None:
     """Cover sidebar.py:128: notification when skill toggle fails."""
     catalog = SkillCatalog({
         "greet": make_skill("greet", "Greeting", active=False),
@@ -376,7 +381,7 @@ async def test_toggle_skill_notifies_on_failure(user: User) -> None:
 
     @ui.page("/test-toggle-fail-notify")
     async def page() -> None:
-        s = Sidebar(session, None, lambda *_: None)
+        s = Sidebar(session, None, lambda *_: None, make_project_store(tmp_path))
         sidebar_ref.append(s)
         await s.render()
 
@@ -389,7 +394,7 @@ async def test_toggle_skill_notifies_on_failure(user: User) -> None:
     )
 
 
-async def test_toggle_skill_notifies_on_deactivate_failure(user: User) -> None:
+async def test_toggle_skill_notifies_on_deactivate_failure(user: User, tmp_path: Path) -> None:
     """Cover sidebar.py:131: deactivate branch of toggle failure notification."""
     catalog = SkillCatalog({
         "greet": make_skill("greet", "Greeting", active=True),
@@ -401,7 +406,7 @@ async def test_toggle_skill_notifies_on_deactivate_failure(user: User) -> None:
 
     @ui.page("/test-toggle-deactivate-fail")
     async def page() -> None:
-        s = Sidebar(session, None, lambda *_: None)
+        s = Sidebar(session, None, lambda *_: None, make_project_store(tmp_path))
         sidebar_ref.append(s)
         await s.render()
 
@@ -434,7 +439,7 @@ async def test_new_session_saves_old_messages(
 
     @ui.page("/test-new-saves")
     async def page() -> None:
-        s = Sidebar(session, store, on_switch)
+        s = Sidebar(session, store, on_switch, make_project_store(tmp_path))
         sidebar_ref.append(s)
         await s.render()
 
@@ -495,22 +500,6 @@ async def test_projects_tab_lists_existing_projects(
 
 
 @pytest.mark.asyncio
-async def test_projects_tab_shows_notice_when_no_store(
-    user: User, tmp_path: Path
-) -> None:
-    session = Session(provider=FakeProvider())
-    store = make_store(tmp_path)
-
-    @ui.page("/test-projects-no-store")
-    async def page() -> None:
-        s = Sidebar(session, store, lambda *_: None, project_store=None)
-        await s.render()
-
-    await user.open("/test-projects-no-store")
-    await user.should_see("No project store configured")
-
-
-@pytest.mark.asyncio
 async def test_create_project_persists_and_refreshes(
     user: User, tmp_path: Path
 ) -> None:
@@ -527,8 +516,11 @@ async def test_create_project_persists_and_refreshes(
         await s.render()
 
     await user.open("/test-create-project")
-    await sidebar_ref[0]._create_project("MyProj", "/tmp/myproj", "Be concise.")
+    saved = await sidebar_ref[0]._create_project(
+        "MyProj", "/tmp/myproj", "Be concise."
+    )
 
+    assert saved is True
     projects = project_store.list_projects()
     assert len(projects) == 1
     assert projects[0].name == "MyProj"
@@ -555,7 +547,8 @@ async def test_create_project_rejects_blank_fields(
 
     await user.open("/test-create-blank")
     with patch("stoiquent.ui.sidebar.ui.notify") as mock_notify:
-        await sidebar_ref[0]._create_project("", "/tmp/x", "")
+        saved = await sidebar_ref[0]._create_project("", "/tmp/x", "")
+    assert saved is False
     mock_notify.assert_called_once_with(
         "Name and folder are required", type="warning"
     )
@@ -583,7 +576,8 @@ async def test_create_project_handles_save_failure(
     with caplog.at_level(logging.ERROR), patch(
         "stoiquent.ui.sidebar.ui.notify"
     ) as mock_notify:
-        await sidebar_ref[0]._create_project("P", "/tmp/p", "")
+        saved = await sidebar_ref[0]._create_project("P", "/tmp/p", "")
+    assert saved is False
     mock_notify.assert_called_once_with("Failed to create project", type="warning")
     assert "Failed to save project" in caplog.text
     caplog.clear()
@@ -610,10 +604,11 @@ async def test_update_project_saves_and_refreshes_active_session(
         await s.render()
 
     await user.open("/test-update-project")
-    await sidebar_ref[0]._update_project(
+    saved = await sidebar_ref[0]._update_project(
         record, "Alpha Renamed", "/tmp/a", "new instructions"
     )
 
+    assert saved is True
     refreshed = project_store.load("p1")
     assert refreshed is not None
     assert refreshed.name == "Alpha Renamed"
@@ -639,7 +634,8 @@ async def test_update_project_rejects_blank(user: User, tmp_path: Path) -> None:
 
     await user.open("/test-update-blank")
     with patch("stoiquent.ui.sidebar.ui.notify") as mock_notify:
-        await sidebar_ref[0]._update_project(record, "", "/tmp/a", "")
+        saved = await sidebar_ref[0]._update_project(record, "", "/tmp/a", "")
+    assert saved is False
     mock_notify.assert_called_once_with(
         "Name and folder are required", type="warning"
     )
@@ -668,7 +664,8 @@ async def test_update_project_handles_save_failure(
     with caplog.at_level(logging.ERROR), patch(
         "stoiquent.ui.sidebar.ui.notify"
     ) as mock_notify:
-        await sidebar_ref[0]._update_project(record, "New", "/tmp/a", "")
+        saved = await sidebar_ref[0]._update_project(record, "New", "/tmp/a", "")
+    assert saved is False
     mock_notify.assert_called_once_with("Failed to update project", type="warning")
     assert "Failed to update project p1" in caplog.text
     caplog.clear()
@@ -1258,6 +1255,43 @@ async def test_sessions_tab_orphans_land_in_ungrouped(
 
 
 @pytest.mark.asyncio
+async def test_user_named_ungrouped_project_renders_distinct_from_bucket(
+    user: User, tmp_path: Path
+) -> None:
+    """Locks item 14: a user who names a project literally "Ungrouped" gets a
+    distinct header from the sessions-without-a-project bucket. Before the
+    em-dash prefix the two groups shared a header and read as a single list.
+    """
+    store = make_store(tmp_path)
+    store.save_sync(
+        "tagged",
+        [Message(role="user", content="tagged-chat")],
+        project_id="p1",
+    )
+    store.save_sync("loose", [Message(role="user", content="loose-chat")])
+    project_store = make_project_store(tmp_path)
+    project_store.save_sync(
+        ProjectRecord(
+            id="p1", name="Ungrouped", folder="/tmp/ung", instructions=""
+        )
+    )
+    session = Session(provider=FakeProvider())
+
+    @ui.page("/test-ungrouped-collision")
+    async def page() -> None:
+        s = Sidebar(session, store, lambda *_: None, project_store)
+        await s.render()
+
+    await user.open("/test-ungrouped-collision")
+    # The literal project name still appears (for the p1 group).
+    await user.should_see("Ungrouped")
+    # The bucket header carries the em-dash prefix, distinguishing it.
+    await user.should_see("— Ungrouped")
+    await user.should_see("tagged-chat")
+    await user.should_see("loose-chat")
+
+
+@pytest.mark.asyncio
 async def test_refresh_projects_handles_list_failure(
     user: User, tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -1275,6 +1309,56 @@ async def test_refresh_projects_handles_list_failure(
         await user.open("/test-refresh-proj-fail")
     await user.should_see("No projects yet")
     assert "Failed to load projects" in caplog.text
+    caplog.clear()
+
+
+@pytest.mark.asyncio
+async def test_list_projects_safe_notifies_once_until_recovery(
+    user: User, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Locks item 11: a failing ProjectStore surfaces ONE toast per
+    healthy→failed transition. Silent re-bucketing during a sustained failure
+    was the pre-F2 behavior that left users without a signal.
+    """
+    session = Session(provider=FakeProvider())
+    store = make_store(tmp_path)
+    project_store = make_project_store(tmp_path)
+    project_store.list_projects_async = AsyncMock(side_effect=OSError("io"))
+
+    sidebar_ref: list[Sidebar] = []
+
+    @ui.page("/test-list-safe-transition")
+    async def page() -> None:
+        s = Sidebar(session, store, lambda *_: None, project_store)
+        sidebar_ref.append(s)
+        await s.render()
+
+    with caplog.at_level(logging.ERROR):
+        await user.open("/test-list-safe-transition")
+        s = sidebar_ref[0]
+        # Reset the flag so the patch below captures the first
+        # healthy→failed transition deterministically (render already
+        # exercised _list_projects_safe twice and flipped it).
+        s._projects_load_healthy = True
+
+        with patch("stoiquent.ui.sidebar.ui.notify") as mock_notify:
+            await s._list_projects_safe()
+            assert mock_notify.call_count == 1
+            # Second failing call: flag already flipped, no re-notify.
+            await s._list_projects_safe()
+            assert mock_notify.call_count == 1
+
+            # Recover: successful load clears the flag without notifying.
+            project_store.list_projects_async = AsyncMock(return_value=[])
+            await s._list_projects_safe()
+            assert mock_notify.call_count == 1
+
+            # Re-fail: healthy→failed transition should re-notify.
+            project_store.list_projects_async = AsyncMock(
+                side_effect=OSError("io2")
+            )
+            await s._list_projects_safe()
+            assert mock_notify.call_count == 2
     caplog.clear()
 
 
@@ -1533,52 +1617,3 @@ async def test_open_delete_project_dialog_pluralizes(
     await user.should_see("This will also delete 2 conversations.")
 
 
-@pytest.mark.asyncio
-async def test_new_project_dialog_skipped_without_store(
-    user: User, tmp_path: Path
-) -> None:
-    """Guard: opening the new-project dialog when project_store is None is a no-op."""
-    session = Session(provider=FakeProvider())
-    store = make_store(tmp_path)
-
-    sidebar_ref: list[Sidebar] = []
-
-    @ui.page("/test-new-proj-no-store")
-    async def page() -> None:
-        s = Sidebar(session, store, lambda *_: None, project_store=None)
-        sidebar_ref.append(s)
-        await s.render()
-
-    await user.open("/test-new-proj-no-store")
-    # Should not raise even though there's no project store.
-    sidebar_ref[0]._open_new_project_dialog()
-
-
-@pytest.mark.asyncio
-async def test_edit_and_delete_dialogs_skip_without_store(
-    user: User, tmp_path: Path
-) -> None:
-    session = Session(provider=FakeProvider())
-    store = make_store(tmp_path)
-
-    sidebar_ref: list[Sidebar] = []
-
-    @ui.page("/test-edit-delete-no-store")
-    async def page() -> None:
-        s = Sidebar(session, store, lambda *_: None, project_store=None)
-        sidebar_ref.append(s)
-        await s.render()
-
-    await user.open("/test-edit-delete-no-store")
-    # Neither call should raise.
-    await sidebar_ref[0]._open_edit_project_dialog("any")
-    await sidebar_ref[0]._open_delete_project_dialog("any")
-    await sidebar_ref[0]._create_project("a", "/b", "")
-    await sidebar_ref[0]._update_project(
-        ProjectRecord(id="x", name="n", folder="/f", instructions=""),
-        "n",
-        "/f",
-        "",
-    )
-    await sidebar_ref[0]._delete_project("any")
-    assert sidebar_ref[0]._project_store is None

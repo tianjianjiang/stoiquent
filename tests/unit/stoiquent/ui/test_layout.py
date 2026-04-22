@@ -19,16 +19,19 @@ from stoiquent.ui.layout import (
     _load_project_instructions,
     _switch_provider,
 )
-from tests.conftest import FakeProvider, two_provider_config
+from tests.conftest import FakeProvider, make_project_store, two_provider_config
 
 
 @pytest.mark.asyncio
-async def test_should_render_layout_with_header_and_sidebar(user: User) -> None:
+async def test_should_render_layout_with_header_and_sidebar(
+    user: User, tmp_path: Path
+) -> None:
     session = Session(provider=FakeProvider())
+    project_store = make_project_store(tmp_path)
 
     @ui.page("/test-layout")
     async def page() -> None:
-        await layout.render(session)
+        await layout.render(session, project_store=project_store)
 
     await user.open("/test-layout")
     await user.should_see("Stoiquent")
@@ -38,25 +41,29 @@ async def test_should_render_layout_with_header_and_sidebar(user: User) -> None:
 
 
 @pytest.mark.asyncio
-async def test_should_render_local_llm_label(user: User) -> None:
+async def test_should_render_local_llm_label(user: User, tmp_path: Path) -> None:
     session = Session(provider=FakeProvider())
+    project_store = make_project_store(tmp_path)
 
     @ui.page("/test-label")
     async def page() -> None:
-        await layout.render(session)
+        await layout.render(session, project_store=project_store)
 
     await user.open("/test-label")
     await user.should_see("Local LLM Agent")
 
 
 @pytest.mark.asyncio
-async def test_should_render_provider_dropdown(user: User) -> None:
+async def test_should_render_provider_dropdown(
+    user: User, tmp_path: Path
+) -> None:
     session = Session(provider=FakeProvider())
     config = two_provider_config(second="cloud-gpt")
+    project_store = make_project_store(tmp_path)
 
     @ui.page("/test-dropdown")
     async def page() -> None:
-        await layout.render(session, config=config)
+        await layout.render(session, config=config, project_store=project_store)
 
     await user.open("/test-dropdown")
     await user.should_see("Stoiquent")
