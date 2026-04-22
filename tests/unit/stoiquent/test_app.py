@@ -90,6 +90,48 @@ def test_should_register_shutdown_hook() -> None:
         assert mock_app.on_shutdown.call_count >= 1
 
 
+def test_should_drain_pending_store_writes_on_shutdown() -> None:
+    """Both stores' drain_pending must be registered on app.on_shutdown so that
+    in-flight save_background tasks finish before NiceGUI tears the loop down.
+    Without this, chat messages / project edits saved shortly before close can
+    be lost.
+
+    Store drains must be registered *after* provider.close and
+    mcp_bridge.stop_all so any subsystem-triggered final writes have already
+    been issued when we start awaiting the pending-tasks set.
+    """
+    config = AppConfig(
+        providers={"p": ProviderConfig(base_url="http://x", model="m")},
+        default_provider="p",
+    )
+    with patch("stoiquent.app.ui") as mock_ui, \
+         patch("stoiquent.app.app") as mock_app, \
+         patch("stoiquent.app.OpenAICompatProvider") as mock_provider_cls, \
+         patch("stoiquent.app.MCPBridge") as mock_bridge_cls, \
+         patch("stoiquent.app.ConversationStore") as mock_conv_store_cls, \
+         patch("stoiquent.app.ProjectStore") as mock_project_store_cls:
+        mock_ui.run = MagicMock()
+        mock_ui.page = MagicMock(return_value=lambda f: f)
+
+        from stoiquent.app import start
+
+        start(config)
+
+        registered = [call.args[0] for call in mock_app.on_shutdown.call_args_list]
+        conv_drain = mock_conv_store_cls.return_value.drain_pending
+        project_drain = mock_project_store_cls.return_value.drain_pending
+        assert conv_drain in registered
+        assert project_drain in registered
+
+        provider_close_idx = registered.index(mock_provider_cls.return_value.close)
+        bridge_stop_idx = registered.index(mock_bridge_cls.return_value.stop_all)
+        conv_drain_idx = registered.index(conv_drain)
+        project_drain_idx = registered.index(project_drain)
+        assert provider_close_idx < conv_drain_idx
+        assert bridge_stop_idx < conv_drain_idx
+        assert conv_drain_idx < project_drain_idx
+
+
 def test_should_raise_systemexit_when_project_store_ensure_dirs_fails() -> None:
     config = AppConfig(
         providers={"p": ProviderConfig(base_url="http://x", model="m")},
