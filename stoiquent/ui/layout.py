@@ -80,8 +80,17 @@ async def render(
             chat.render()
 
     def _teardown_page() -> None:
-        skills_manager.teardown()
-        sidebar.teardown()
+        # Exception-isolate the two teardowns: a misbehaving unsubscribe
+        # callable must not prevent the sibling teardown from running, or
+        # the "leak" the teardown was meant to plug survives silently.
+        for label, teardown in (
+            ("skills_manager", skills_manager.teardown),
+            ("sidebar", sidebar.teardown),
+        ):
+            try:
+                teardown()
+            except Exception:
+                logger.exception("Failed to tear down %s on disconnect", label)
 
     ui.context.client.on_disconnect(_teardown_page)
 

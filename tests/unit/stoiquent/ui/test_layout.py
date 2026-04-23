@@ -349,13 +349,13 @@ def test_apply_session_switch_loads_new_project_instructions(
 
 @pytest.mark.asyncio
 async def test_layout_registers_client_disconnect_teardown(
-    user: User, tmp_path: Path
+    user: User, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Regression guard: layout.render must register ``ui.context.client.
     on_disconnect(...)`` so SkillsManager and Sidebar release controller
-    subscriptions when the browser disconnects. We verify by spying on
-    ``Client.on_disconnect`` and asserting at least one handler was
-    registered during page render."""
+    subscriptions when the browser disconnects. We spy on
+    ``Client.on_disconnect`` and filter for our named closure so we're
+    robust to NiceGUI registering its own handlers in the same call."""
     session = Session(provider=FakeProvider())
     project_store = make_project_store(tmp_path)
 
@@ -368,16 +368,77 @@ async def test_layout_registers_client_disconnect_teardown(
         captured.append(cb)
         original(self, cb)
 
-    Client.on_disconnect = _spy  # type: ignore[method-assign,assignment]
-    try:
-        @ui.page("/test-teardown-registration")
-        async def page() -> None:
-            await layout.render(session, None, None, project_store=project_store)
+    monkeypatch.setattr(Client, "on_disconnect", _spy)
 
-        await user.open("/test-teardown-registration")
-    finally:
-        Client.on_disconnect = original  # type: ignore[method-assign]
+    @ui.page("/test-teardown-registration")
+    async def page() -> None:
+        await layout.render(session, None, None, project_store=project_store)
 
-    assert captured, "layout.render must register an on_disconnect handler"
-    assert callable(captured[-1])
-    captured[-1]()  # must be safe to invoke — teardowns are idempotent
+    await user.open("/test-teardown-registration")
+    ours = [
+        cb for cb in captured
+        if callable(cb) and getattr(cb, "__name__", "") == "_teardown_page"
+    ]
+    assert ours, (
+        "layout.render must register the _teardown_page closure on disconnect"
+    )
+    ours[0]()  # must be safe to invoke — teardowns are exception-isolated
+
+
+@pytest.mark.asyncio
+async def test_layout_teardown_continues_when_one_teardown_raises(
+    user: User, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A failing teardown must not skip its sibling. We monkeypatch
+    SkillsManager.teardown to raise, then assert Sidebar.teardown still
+    fires and the failure is logged."""
+    session = Session(provider=FakeProvider())
+    project_store = make_project_store(tmp_path)
+
+    from nicegui.client import Client
+
+    from stoiquent.ui.sidebar import Sidebar as SidebarCls
+    from stoiquent.ui.skills_manager import SkillsManager as SMCls
+
+    captured: list[object] = []
+
+    def _spy(self: Client, cb: object) -> None:
+        captured.append(cb)
+
+    monkeypatch.setattr(Client, "on_disconnect", _spy)
+
+    def _raising_teardown(self: SMCls) -> None:
+        raise RuntimeError("unsub exploded")
+
+    sidebar_called: list[bool] = []
+    real_sidebar_teardown = SidebarCls.teardown
+
+    def _counting_sidebar_teardown(self: SidebarCls) -> None:
+        sidebar_called.append(True)
+        real_sidebar_teardown(self)
+
+    monkeypatch.setattr(SMCls, "teardown", _raising_teardown)
+    monkeypatch.setattr(SidebarCls, "teardown", _counting_sidebar_teardown)
+
+    @ui.page("/test-teardown-isolation")
+    async def page() -> None:
+        await layout.render(session, None, None, project_store=project_store)
+
+    await user.open("/test-teardown-isolation")
+    ours = [
+        cb for cb in captured
+        if callable(cb) and getattr(cb, "__name__", "") == "_teardown_page"
+    ]
+    assert ours
+    with caplog.at_level(logging.ERROR, logger="stoiquent.ui.layout"):
+        ours[0]()
+    assert sidebar_called == [True], (
+        "sidebar.teardown must run even if skills_manager.teardown raises"
+    )
+    assert any(
+        "skills_manager" in r.getMessage() for r in caplog.records
+    ), "failing teardown must be logged"
+    # NiceGUI's test teardown fails on lingering ERROR logs; the one we
+    # emitted is expected, so clear it.
+    caplog.clear()
