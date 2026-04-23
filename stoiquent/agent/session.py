@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from stoiquent.sandbox.base import SandboxBackend
     from stoiquent.sandbox.models import SandboxPolicy
     from stoiquent.skills.catalog import SkillCatalog
+    from stoiquent.skills.controller import SkillController
     from stoiquent.skills.mcp_bridge import MCPBridge
 
 
@@ -20,6 +21,7 @@ class Session:
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
     messages: list[Message] = field(default_factory=list)
     catalog: SkillCatalog | None = None
+    controller: SkillController | None = None
     sandbox: SandboxBackend | None = None
     sandbox_policy: SandboxPolicy | None = None
     mcp_bridge: MCPBridge | None = None

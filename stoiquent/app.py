@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from nicegui import app, ui
 
 from stoiquent.agent.session import Session
@@ -8,10 +10,14 @@ from stoiquent.models import AppConfig
 from stoiquent.persistence import ConversationStore
 from stoiquent.projects import ProjectStore
 from stoiquent.sandbox.detect import detect_backend
+from stoiquent.skills.active_store import ActiveSkillsLoadError, ActiveSkillsStore
 from stoiquent.skills.catalog import SkillCatalog
+from stoiquent.skills.controller import SkillController
 from stoiquent.skills.discovery import discover_skills
 from stoiquent.skills.mcp_bridge import MCPBridge
 from stoiquent.ui import layout
+
+logger = logging.getLogger(__name__)
 
 
 def start(config: AppConfig) -> None:
@@ -34,9 +40,13 @@ def start(config: AppConfig) -> None:
     mcp_bridge = MCPBridge()
     app.on_shutdown(mcp_bridge.stop_all)
 
+    active_store = ActiveSkillsStore(config.persistence)
+    controller = SkillController(catalog, mcp_bridge, active_store)
+
     session = Session(
         provider=provider,
         catalog=catalog,
+        controller=controller,
         sandbox=sandbox,
         mcp_bridge=mcp_bridge,
         iteration_limit=config.agent.iteration_limit,
@@ -48,6 +58,7 @@ def start(config: AppConfig) -> None:
     try:
         store.ensure_dirs()
         project_store.ensure_dirs()
+        active_store.ensure_dirs()
     except OSError as e:
         raise SystemExit(
             f"Cannot create persistence directory at "
@@ -56,6 +67,26 @@ def start(config: AppConfig) -> None:
 
     app.on_shutdown(store.drain_pending)
     app.on_shutdown(project_store.drain_pending)
+    app.on_shutdown(active_store.drain_pending)
+
+    async def _restore_active_skills() -> None:
+        try:
+            names = active_store.load()
+        except ActiveSkillsLoadError:
+            logger.warning(
+                "active_skills.json is damaged; starting with no skills active"
+            )
+            return
+        if not names:
+            return
+        results = await controller.activate_many(names)
+        for name, result in results.items():
+            if not result.success:
+                logger.warning(
+                    "Could not restore active skill %r: %s", name, result.reason
+                )
+
+    app.on_startup(_restore_active_skills)
 
     @ui.page("/")
     async def _main_page() -> None:  # pragma: no cover

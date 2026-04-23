@@ -158,3 +158,122 @@ def test_should_raise_systemexit_when_project_store_ensure_dirs_fails() -> None:
         # Pins ordering: ConversationStore succeeds first; ProjectStore raises second.
         mock_conv_store_cls.return_value.ensure_dirs.assert_called_once()
         mock_project_store_cls.return_value.ensure_dirs.assert_called_once()
+
+
+def test_should_register_active_store_drain_on_shutdown() -> None:
+    config = AppConfig(
+        providers={"p": ProviderConfig(base_url="http://x", model="m")},
+        default_provider="p",
+    )
+    with patch("stoiquent.app.ui") as mock_ui, \
+         patch("stoiquent.app.app") as mock_app, \
+         patch("stoiquent.app.ActiveSkillsStore") as mock_active_store_cls:
+        mock_ui.run = MagicMock()
+        mock_ui.page = MagicMock(return_value=lambda f: f)
+
+        from stoiquent.app import start
+
+        start(config)
+
+        registered = [call.args[0] for call in mock_app.on_shutdown.call_args_list]
+        assert mock_active_store_cls.return_value.drain_pending in registered
+
+
+def test_should_register_restore_hook_on_startup() -> None:
+    config = AppConfig(
+        providers={"p": ProviderConfig(base_url="http://x", model="m")},
+        default_provider="p",
+    )
+    with patch("stoiquent.app.ui") as mock_ui, \
+         patch("stoiquent.app.app") as mock_app:
+        mock_ui.run = MagicMock()
+        mock_ui.page = MagicMock(return_value=lambda f: f)
+
+        from stoiquent.app import start
+
+        start(config)
+
+        assert mock_app.on_startup.call_count == 1
+        hook = mock_app.on_startup.call_args_list[0].args[0]
+        assert hook.__name__ == "_restore_active_skills"
+
+
+async def test_restore_activates_every_saved_skill() -> None:
+    from unittest.mock import AsyncMock
+
+    config = AppConfig(
+        providers={"p": ProviderConfig(base_url="http://x", model="m")},
+        default_provider="p",
+    )
+    with patch("stoiquent.app.ui") as mock_ui, \
+         patch("stoiquent.app.app") as mock_app, \
+         patch("stoiquent.app.ActiveSkillsStore") as mock_active_store_cls, \
+         patch("stoiquent.app.SkillController") as mock_controller_cls:
+        mock_ui.run = MagicMock()
+        mock_ui.page = MagicMock(return_value=lambda f: f)
+        mock_active_store_cls.return_value.load.return_value = ["hello", "gh-cli"]
+        mock_controller_cls.return_value.activate_many = AsyncMock(return_value={})
+
+        from stoiquent.app import start
+
+        start(config)
+
+        hook = mock_app.on_startup.call_args_list[0].args[0]
+        await hook()
+        mock_controller_cls.return_value.activate_many.assert_awaited_once_with(
+            ["hello", "gh-cli"]
+        )
+
+
+async def test_restore_is_noop_when_active_store_damaged() -> None:
+    from unittest.mock import AsyncMock
+
+    from stoiquent.skills.active_store import ActiveSkillsLoadError
+
+    config = AppConfig(
+        providers={"p": ProviderConfig(base_url="http://x", model="m")},
+        default_provider="p",
+    )
+    with patch("stoiquent.app.ui") as mock_ui, \
+         patch("stoiquent.app.app") as mock_app, \
+         patch("stoiquent.app.ActiveSkillsStore") as mock_active_store_cls, \
+         patch("stoiquent.app.SkillController") as mock_controller_cls:
+        mock_ui.run = MagicMock()
+        mock_ui.page = MagicMock(return_value=lambda f: f)
+        mock_active_store_cls.return_value.load.side_effect = ActiveSkillsLoadError(
+            "damaged"
+        )
+        mock_controller_cls.return_value.activate_many = AsyncMock()
+
+        from stoiquent.app import start
+
+        start(config)
+
+        hook = mock_app.on_startup.call_args_list[0].args[0]
+        await hook()
+        mock_controller_cls.return_value.activate_many.assert_not_called()
+
+
+async def test_restore_is_noop_when_no_persisted_skills() -> None:
+    from unittest.mock import AsyncMock
+
+    config = AppConfig(
+        providers={"p": ProviderConfig(base_url="http://x", model="m")},
+        default_provider="p",
+    )
+    with patch("stoiquent.app.ui") as mock_ui, \
+         patch("stoiquent.app.app") as mock_app, \
+         patch("stoiquent.app.ActiveSkillsStore") as mock_active_store_cls, \
+         patch("stoiquent.app.SkillController") as mock_controller_cls:
+        mock_ui.run = MagicMock()
+        mock_ui.page = MagicMock(return_value=lambda f: f)
+        mock_active_store_cls.return_value.load.return_value = []
+        mock_controller_cls.return_value.activate_many = AsyncMock()
+
+        from stoiquent.app import start
+
+        start(config)
+
+        hook = mock_app.on_startup.call_args_list[0].args[0]
+        await hook()
+        mock_controller_cls.return_value.activate_many.assert_not_called()
