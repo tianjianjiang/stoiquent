@@ -166,16 +166,13 @@ async def test_header_manage_button_disabled_when_manager_missing(
 ) -> None:
     """The previous version only asserted the button rendered — a
     regression that dropped the ``disable()`` call would silently ship a
-    dead-but-clickable button. Capture the button element and assert its
-    disabled state on the widget props."""
+    dead-but-clickable button. Capture the button element and assert
+    its ``enabled`` attribute is ``False``."""
     controller = _controller({"alpha": _skill("alpha")})
-    menu_ref: list[SkillsHeaderMenu] = []
 
     @ui.page("/test-header-no-manager")
     async def page() -> None:
-        menu = SkillsHeaderMenu(controller, manager=None)
-        menu.build()
-        menu_ref.append(menu)
+        SkillsHeaderMenu(controller, manager=None).build()
 
     await user.open("/test-header-no-manager")
     await user.should_see(marker="skills-header-manage-btn")
