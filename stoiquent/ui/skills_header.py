@@ -125,6 +125,8 @@ class SkillsHeaderMenu:
             if active
             else await self._controller.deactivate(name)
         )
+        for warning in result.warnings:
+            ui.notify(warning, type="warning")
         if not result.success:
             verb = "activate" if active else "deactivate"
             ui.notify(
