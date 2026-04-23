@@ -56,8 +56,9 @@ class ReloadResult:
     problems the user should see. UI callers MUST render warnings. One
     warning is emitted per entry in ``deactivation_failures``, in the
     same sort order (skill-name asc), so callers can correlate them by
-    index. Warnings use the same format as the deactivate-cleanup
-    message on :class:`ActivationResult`; the activate-rollback
+    index. This pairing is enforced at construction (``ValueError`` on
+    length mismatch). Warnings use the same format as the deactivate-
+    cleanup message on :class:`ActivationResult`; the activate-rollback
     message on :class:`ActivationResult` uses a distinct shape.
     """
 
@@ -70,10 +71,9 @@ class ReloadResult:
     def __post_init__(self) -> None:
         if len(self.warnings) != len(self.deactivation_failures):
             raise ValueError(
-                "ReloadResult.warnings must pair 1:1 with "
-                "deactivation_failures; got "
-                f"{len(self.warnings)} warnings vs "
-                f"{len(self.deactivation_failures)} deactivation_failures"
+                f"ReloadResult.warnings ({len(self.warnings)}) must pair "
+                f"1:1 with deactivation_failures "
+                f"({len(self.deactivation_failures)})"
             )
 
 
