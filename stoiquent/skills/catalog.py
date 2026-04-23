@@ -16,6 +16,11 @@ class SkillCatalog:
     def skills(self) -> dict[str, Skill]:
         return self._skills
 
+    def replace(self, skills: dict[str, Skill]) -> None:
+        """Swap the catalog contents. Callers must pre-compute each skill's
+        ``active`` flag; the catalog doesn't preserve state across replace."""
+        self._skills = dict(skills)
+
     def activate(self, name: str) -> bool:
         skill = self._skills.get(name)
         if skill is None:
