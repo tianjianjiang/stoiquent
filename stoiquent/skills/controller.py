@@ -53,7 +53,12 @@ class ReloadResult:
 
     ``warnings`` mirrors :attr:`ActivationResult.warnings` — a tuple of
     human-readable strings describing leaked subprocesses or cleanup
-    problems the user should see. UI callers MUST render warnings.
+    problems the user should see. UI callers MUST render warnings. One
+    warning is emitted per entry in ``deactivation_failures``, in the
+    same sort order (skill-name asc), so callers can correlate them by
+    index. Warnings use the same format as the deactivate-cleanup
+    message on :class:`ActivationResult`; the activate-rollback
+    message on :class:`ActivationResult` uses a distinct shape.
     """
 
     added: list[str] = field(default_factory=list)
@@ -249,8 +254,9 @@ class SkillController:
         Subscribers fire exactly once after the full swap, not per
         skill. ``deactivation_failures`` lists (sorted, deduplicated)
         names whose MCP cleanup raised — the catalog swap proceeds
-        regardless, so UI callers must surface this list to warn the
-        user about potentially-leaked subprocesses.
+        regardless. UI callers MUST render :attr:`ReloadResult.warnings`
+        (richer than ``deactivation_failures`` — includes the leaked
+        server IDs) so the user can reap orphan subprocesses manually.
         """
         async with self._lock:
             prev_active = {s.meta.name for s in self._catalog.get_active_skills()}
@@ -278,6 +284,9 @@ class SkillController:
                             sid,
                             name,
                         )
+                        # Shutdown signals (KeyboardInterrupt, SystemExit,
+                        # CancelledError) must propagate — reconciliation
+                        # errors should never swallow a signal.
                         if not isinstance(cleanup_exc, Exception):
                             raise
 

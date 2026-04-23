@@ -124,8 +124,9 @@ async def test_drain_pending_awaits_all_in_flight_tasks(
 
 async def test_save_background_preserves_fifo_order(tmp_path: Path) -> None:
     """Rapid concurrent save_background calls must land in call order;
-    the last-scheduled state wins. Without the internal save lock, two
-    os.replace calls race and the on-disk state is non-deterministic."""
+    the last-scheduled state wins. Without the internal save lock,
+    multiple os.replace calls race and the on-disk state is
+    non-deterministic."""
     store = _make_store(tmp_path)
     store.save_background(["a"])
     store.save_background(["a", "b"])
