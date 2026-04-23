@@ -7,8 +7,10 @@ from typing import TYPE_CHECKING
 from nicegui import ui
 
 from stoiquent.agent.session import Session
+from stoiquent.skills.discovery import discover_skills
 from stoiquent.ui.chat import ChatPanel
 from stoiquent.ui.sidebar import Sidebar, SessionSwitch
+from stoiquent.ui.skills_manager import SkillsManager
 from stoiquent.ui.theme import DarkModeToggle, apply_theme
 
 if TYPE_CHECKING:
@@ -55,9 +57,23 @@ async def render(
             ).classes("w-40").props("dense").mark("provider-select")
         ui.label("Local LLM Agent").classes("text-caption opacity-60")
 
+    skills_manager = SkillsManager(
+        session.controller,
+        discover=(
+            (lambda cfg=config.skills: discover_skills(cfg)) if config else None
+        ),
+    )
+    skills_manager.build()
+
     with ui.splitter(value=20).classes("w-full h-screen") as splitter:
         with splitter.before:
-            sidebar = Sidebar(session, store, on_session_switch, project_store)
+            sidebar = Sidebar(
+                session,
+                store,
+                on_session_switch,
+                project_store,
+                skills_manager=skills_manager,
+            )
             await sidebar.render()
 
         with splitter.after:
