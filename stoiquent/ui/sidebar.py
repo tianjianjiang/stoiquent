@@ -17,6 +17,7 @@ from stoiquent.projects import ProjectDeleteResult, ProjectLoadError, ProjectRec
 if TYPE_CHECKING:
     from stoiquent.persistence import ConversationStore, ConversationSummary
     from stoiquent.projects import ProjectStore, ProjectSummary
+    from stoiquent.ui.skills_manager import SkillsManager
 
 logger = logging.getLogger(__name__)
 
@@ -67,13 +68,18 @@ class Sidebar:
         store: ConversationStore | None,
         on_session_switch: OnSessionSwitch,
         project_store: ProjectStore,
+        *,
+        skills_manager: SkillsManager | None = None,
     ) -> None:
         self._session = session
         self._store = store
         self._project_store = project_store
         self._on_session_switch = on_session_switch
+        self._skills_manager = skills_manager
         self._sessions_container: ui.column | None = None
         self._projects_container: ui.column | None = None
+        self._skills_container: ui.column | None = None
+        self._skills_unsubscribe: Callable[[], None] | None = None
         self._active_project_id: str | None = None
         # Optimistic baseline: a fresh sidebar has no known failure.
         # Flips to False on the first _list_projects_safe failure so a
@@ -594,32 +600,59 @@ class Sidebar:
     # --- Skills tab ---
 
     def _render_skills_tab(self) -> None:
-        catalog = self._session.catalog
-        if catalog is None:
-            ui.label("No skills configured").classes("text-caption opacity-40")
-            return
+        self._skills_container = (
+            ui.column().classes("w-full gap-1").mark("skills-summary")
+        )
+        self._refresh_skills_summary()
+        controller = self._session.controller
+        if controller is not None and self._skills_unsubscribe is None:
+            self._skills_unsubscribe = controller.subscribe(
+                self._refresh_skills_summary
+            )
 
-        if not catalog.skills:
-            ui.label("No skills discovered").classes("text-caption opacity-40")
+    def _refresh_skills_summary(self) -> None:
+        container = self._skills_container
+        if container is None:
             return
-
-        for name, skill in catalog.skills.items():
-            with ui.row().classes("w-full items-center gap-2 py-1"):
-                with ui.column().classes("flex-grow gap-0"):
-                    ui.label(name).classes("text-sm font-medium")
-                    ui.label(skill.meta.description).classes(
-                        "text-xs opacity-60"
-                    )
-                ui.switch(
-                    value=skill.active,
-                    on_change=lambda e, n=name: self._toggle_skill(n, e.value),
+        container.clear()
+        with container:
+            catalog = self._session.catalog
+            if catalog is None:
+                ui.label("No skills configured").classes(
+                    "text-caption opacity-40"
                 )
+                return
+            active_skills = [s for s in catalog.skills.values() if s.active]
+            ui.label(f"Active ({len(active_skills)})").classes(
+                "text-caption opacity-60"
+            ).mark("skills-active-header")
+            if active_skills:
+                with ui.column().classes("w-full gap-0").mark(
+                    "skills-active-list"
+                ):
+                    for skill in active_skills:
+                        ui.label(skill.meta.name).classes(
+                            "text-sm font-medium"
+                        )
+                        if skill.meta.description:
+                            ui.label(skill.meta.description).classes(
+                                "text-xs opacity-60"
+                            )
+            elif catalog.skills:
+                ui.label("No active skills").classes(
+                    "text-caption opacity-40"
+                )
+            else:
+                ui.label("No skills discovered").classes(
+                    "text-caption opacity-40"
+                )
+            ui.separator()
+            manage_btn = ui.button(
+                "Manage skills…", on_click=self._open_skills_manager
+            ).classes("w-full").props("flat dense").mark("skills-manage-btn")
+            if self._skills_manager is None or not self._skills_manager.available:
+                manage_btn.disable()
 
-    def _toggle_skill(self, name: str, active: bool) -> None:
-        catalog = self._session.catalog
-        if catalog is None:
-            return
-        success = catalog.activate(name) if active else catalog.deactivate(name)
-        if not success:
-            action = "activate" if active else "deactivate"
-            ui.notify(f"Failed to {action} skill '{name}'", type="warning")
+    def _open_skills_manager(self) -> None:
+        if self._skills_manager is not None:
+            self._skills_manager.open()

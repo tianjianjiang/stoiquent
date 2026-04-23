@@ -105,7 +105,9 @@ async def test_should_list_sessions_from_store(
 
 
 @pytest.mark.asyncio
-async def test_should_show_skills_with_toggles(user: User, tmp_path: Path) -> None:
+async def test_skills_summary_lists_only_active_skills(
+    user: User, tmp_path: Path
+) -> None:
     catalog = SkillCatalog({
         "greet": make_skill("greet", "Greeting skill", active=True),
         "search": make_skill("search", "Search skill", active=False),
@@ -114,23 +116,50 @@ async def test_should_show_skills_with_toggles(user: User, tmp_path: Path) -> No
 
     @ui.page("/test-skills")
     async def page() -> None:
-        sidebar = Sidebar(session, None, lambda *_: None, make_project_store(tmp_path))
+        sidebar = Sidebar(
+            session, None, lambda *_: None, make_project_store(tmp_path)
+        )
         await sidebar.render()
 
     await user.open("/test-skills")
+    await user.should_see("Active (1)")
     await user.should_see("greet")
     await user.should_see("Greeting skill")
-    await user.should_see("search")
-    await user.should_see("Search skill")
+    await user.should_not_see("search")
 
 
 @pytest.mark.asyncio
-async def test_should_show_no_skills_message(user: User, tmp_path: Path) -> None:
+async def test_skills_summary_shows_no_active_when_all_inactive(
+    user: User, tmp_path: Path
+) -> None:
+    catalog = SkillCatalog({
+        "greet": make_skill("greet", "Greeting skill", active=False),
+    })
+    session = Session(provider=FakeProvider(), catalog=catalog)
+
+    @ui.page("/test-no-active")
+    async def page() -> None:
+        sidebar = Sidebar(
+            session, None, lambda *_: None, make_project_store(tmp_path)
+        )
+        await sidebar.render()
+
+    await user.open("/test-no-active")
+    await user.should_see("Active (0)")
+    await user.should_see("No active skills")
+
+
+@pytest.mark.asyncio
+async def test_skills_summary_shows_no_catalog_message(
+    user: User, tmp_path: Path
+) -> None:
     session = Session(provider=FakeProvider())
 
     @ui.page("/test-no-skills")
     async def page() -> None:
-        sidebar = Sidebar(session, None, lambda *_: None, make_project_store(tmp_path))
+        sidebar = Sidebar(
+            session, None, lambda *_: None, make_project_store(tmp_path)
+        )
         await sidebar.render()
 
     await user.open("/test-no-skills")
@@ -138,13 +167,16 @@ async def test_should_show_no_skills_message(user: User, tmp_path: Path) -> None
 
 
 @pytest.mark.asyncio
-async def test_should_show_empty_catalog_message(user: User, tmp_path: Path) -> None:
-    catalog = SkillCatalog({})
-    session = Session(provider=FakeProvider(), catalog=catalog)
+async def test_skills_summary_shows_no_discovered_when_catalog_empty(
+    user: User, tmp_path: Path
+) -> None:
+    session = Session(provider=FakeProvider(), catalog=SkillCatalog({}))
 
     @ui.page("/test-empty-catalog")
     async def page() -> None:
-        sidebar = Sidebar(session, None, lambda *_: None, make_project_store(tmp_path))
+        sidebar = Sidebar(
+            session, None, lambda *_: None, make_project_store(tmp_path)
+        )
         await sidebar.render()
 
     await user.open("/test-empty-catalog")
@@ -235,7 +267,39 @@ async def test_load_nonexistent_session_does_not_switch(
 
 
 @pytest.mark.asyncio
-async def test_toggle_skill(user: User, tmp_path: Path) -> None:
+async def test_manage_button_opens_skills_manager(
+    user: User, tmp_path: Path
+) -> None:
+    catalog = SkillCatalog({
+        "greet": make_skill("greet", "Greeting", active=False),
+    })
+    session = Session(provider=FakeProvider(), catalog=catalog)
+
+    manager = Mock()
+    manager.available = True
+    sidebar_ref: list[Sidebar] = []
+
+    @ui.page("/test-manage-btn")
+    async def page() -> None:
+        s = Sidebar(
+            session,
+            None,
+            lambda *_: None,
+            make_project_store(tmp_path),
+            skills_manager=manager,
+        )
+        sidebar_ref.append(s)
+        await s.render()
+
+    await user.open("/test-manage-btn")
+    sidebar_ref[0]._open_skills_manager()
+    manager.open.assert_called_once_with()
+
+
+@pytest.mark.asyncio
+async def test_manage_button_is_noop_without_manager(
+    user: User, tmp_path: Path
+) -> None:
     catalog = SkillCatalog({
         "greet": make_skill("greet", "Greeting", active=False),
     })
@@ -243,38 +307,44 @@ async def test_toggle_skill(user: User, tmp_path: Path) -> None:
 
     sidebar_ref: list[Sidebar] = []
 
-    @ui.page("/test-toggle")
+    @ui.page("/test-manage-noop")
     async def page() -> None:
-        s = Sidebar(session, None, lambda *_: None, make_project_store(tmp_path))
+        s = Sidebar(
+            session, None, lambda *_: None, make_project_store(tmp_path)
+        )
         sidebar_ref.append(s)
         await s.render()
 
-    await user.open("/test-toggle")
-    sidebar_ref[0]._toggle_skill("greet", True)
-    assert catalog.skills["greet"].active is True
-
-    sidebar_ref[0]._toggle_skill("greet", False)
-    assert catalog.skills["greet"].active is False
+    await user.open("/test-manage-noop")
+    sidebar_ref[0]._open_skills_manager()
 
 
-async def test_toggle_nonexistent_skill(user: User, tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_skills_summary_refreshes_on_controller_event(
+    user: User, tmp_path: Path
+) -> None:
+    from stoiquent.skills.controller import SkillController
+    from stoiquent.skills.mcp_bridge import MCPBridge
+
     catalog = SkillCatalog({
         "greet": make_skill("greet", "Greeting", active=False),
     })
-    session = Session(provider=FakeProvider(), catalog=catalog)
+    controller = SkillController(catalog, MCPBridge())
+    session = Session(
+        provider=FakeProvider(), catalog=catalog, controller=controller
+    )
 
-    sidebar_ref: list[Sidebar] = []
-
-    @ui.page("/test-toggle-fail")
+    @ui.page("/test-summary-refresh")
     async def page() -> None:
-        s = Sidebar(session, None, lambda *_: None, make_project_store(tmp_path))
-        sidebar_ref.append(s)
-        await s.render()
+        sidebar = Sidebar(
+            session, None, lambda *_: None, make_project_store(tmp_path)
+        )
+        await sidebar.render()
 
-    await user.open("/test-toggle-fail")
-    # Toggling a nonexistent skill should not raise
-    sidebar_ref[0]._toggle_skill("nonexistent", True)
-    assert catalog.skills["greet"].active is False
+    await user.open("/test-summary-refresh")
+    await user.should_see("Active (0)")
+    await controller.activate("greet")
+    await user.should_see("Active (1)")
 
 
 # --- Error-handling coverage ---
@@ -399,54 +469,25 @@ async def test_load_session_saves_old_messages(
     assert received[0][0] == "target"
 
 
-async def test_toggle_skill_notifies_on_failure(user: User, tmp_path: Path) -> None:
-    """Cover sidebar.py:128: notification when skill toggle fails."""
+async def test_sidebar_ignores_subscribe_before_render(
+    user: User, tmp_path: Path
+) -> None:
+    """The summary is only wired to the controller *after* render installs
+    the skills container. Calling subscribe-side code before render must
+    not crash."""
+    from stoiquent.skills.controller import SkillController
+    from stoiquent.skills.mcp_bridge import MCPBridge
+
     catalog = SkillCatalog({
         "greet": make_skill("greet", "Greeting", active=False),
     })
-    catalog.activate = Mock(return_value=False)
-
-    session = Session(provider=FakeProvider(), catalog=catalog)
-    sidebar_ref: list[Sidebar] = []
-
-    @ui.page("/test-toggle-fail-notify")
-    async def page() -> None:
-        s = Sidebar(session, None, lambda *_: None, make_project_store(tmp_path))
-        sidebar_ref.append(s)
-        await s.render()
-
-    await user.open("/test-toggle-fail-notify")
-    with patch("stoiquent.ui.sidebar.ui.notify") as mock_notify:
-        sidebar_ref[0]._toggle_skill("greet", True)
-    catalog.activate.assert_called_once_with("greet")
-    mock_notify.assert_called_once_with(
-        "Failed to activate skill 'greet'", type="warning"
+    controller = SkillController(catalog, MCPBridge())
+    session = Session(
+        provider=FakeProvider(), catalog=catalog, controller=controller
     )
 
-
-async def test_toggle_skill_notifies_on_deactivate_failure(user: User, tmp_path: Path) -> None:
-    """Cover sidebar.py:131: deactivate branch of toggle failure notification."""
-    catalog = SkillCatalog({
-        "greet": make_skill("greet", "Greeting", active=True),
-    })
-    catalog.deactivate = Mock(return_value=False)
-
-    session = Session(provider=FakeProvider(), catalog=catalog)
-    sidebar_ref: list[Sidebar] = []
-
-    @ui.page("/test-toggle-deactivate-fail")
-    async def page() -> None:
-        s = Sidebar(session, None, lambda *_: None, make_project_store(tmp_path))
-        sidebar_ref.append(s)
-        await s.render()
-
-    await user.open("/test-toggle-deactivate-fail")
-    with patch("stoiquent.ui.sidebar.ui.notify") as mock_notify:
-        sidebar_ref[0]._toggle_skill("greet", False)
-    catalog.deactivate.assert_called_once_with("greet")
-    mock_notify.assert_called_once_with(
-        "Failed to deactivate skill 'greet'", type="warning"
-    )
+    s = Sidebar(session, None, lambda *_: None, make_project_store(tmp_path))
+    s._refresh_skills_summary()
 
 
 async def test_new_session_saves_old_messages(
