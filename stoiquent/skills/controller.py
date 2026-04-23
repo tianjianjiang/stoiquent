@@ -50,12 +50,17 @@ class ReloadResult:
     during reconciliation. ``deactivation_failures`` is a sorted list
     with no duplicates — a skill is listed at most once even if several
     of its MCP servers failed to stop.
+
+    ``warnings`` mirrors :attr:`ActivationResult.warnings` — a tuple of
+    human-readable strings describing leaked subprocesses or cleanup
+    problems the user should see. UI callers MUST render warnings.
     """
 
     added: list[str] = field(default_factory=list)
     removed: list[str] = field(default_factory=list)
     preserved: list[str] = field(default_factory=list)
     deactivation_failures: list[str] = field(default_factory=list)
+    warnings: tuple[str, ...] = ()
 
 
 class SkillController:
@@ -132,7 +137,9 @@ class SkillController:
                     started.append(server_id)
             except BaseException as exc:
                 # Catch BaseException — asyncio.CancelledError inherits from
-                # it in 3.8+ and would otherwise leak started subprocesses.
+                # BaseException (not Exception) in Python 3.8+, so catching
+                # only Exception would leak started subprocesses on
+                # cancellation.
                 logger.exception(
                     "Failed to start MCP servers for skill %s; rolling back",
                     name,
@@ -141,7 +148,7 @@ class SkillController:
                 for sid in started:
                     try:
                         await self._mcp.stop_server(sid)
-                    except BaseException:
+                    except BaseException as rollback_exc:
                         rollback_failures.append(sid)
                         logger.exception(
                             "Failed to stop partially-started MCP server %s "
@@ -149,6 +156,11 @@ class SkillController:
                             sid,
                             name,
                         )
+                        # Shutdown signals raised by stop_server itself must
+                        # continue to propagate — don't let best-effort
+                        # rollback convert them into warnings.
+                        if not isinstance(rollback_exc, Exception):
+                            raise
                 warnings = (
                     (
                         f"MCP rollback leaked {len(rollback_failures)} server(s) "
@@ -183,11 +195,16 @@ class SkillController:
             for sid in server_ids:
                 try:
                     await self._mcp.stop_server(sid)
-                except BaseException:
+                except BaseException as cleanup_exc:
                     failed_ids.append(sid)
                     logger.exception(
                         "Failed to stop MCP server %s for skill %s", sid, name
                     )
+                    # Shutdown signals raised by stop_server itself must
+                    # continue to propagate — cleanup errors should never
+                    # swallow a KeyboardInterrupt.
+                    if not isinstance(cleanup_exc, Exception):
+                        raise
 
             self._catalog.deactivate(name)
             self._persist()
@@ -247,18 +264,22 @@ class SkillController:
             vanished_active = sorted(prev_active - new_names)
 
             deactivation_failures_set: set[str] = set()
+            failed_by_skill: dict[str, list[str]] = {}
             for name in vanished_active:
                 server_ids = self._skill_servers.pop(name, [])
                 for sid in server_ids:
                     try:
                         await self._mcp.stop_server(sid)
-                    except BaseException:
+                    except BaseException as cleanup_exc:
                         deactivation_failures_set.add(name)
+                        failed_by_skill.setdefault(name, []).append(sid)
                         logger.exception(
                             "Failed to stop MCP server %s for vanished skill %s",
                             sid,
                             name,
                         )
+                        if not isinstance(cleanup_exc, Exception):
+                            raise
 
             reconciled: dict[str, Skill] = {}
             for name, skill in new_skills.items():
@@ -275,11 +296,17 @@ class SkillController:
             self._persist()
 
         self._notify()
+        warnings = tuple(
+            f"MCP cleanup failed for '{skill_name}': "
+            f"{','.join(sids)} — subprocess(es) may still be running"
+            for skill_name, sids in sorted(failed_by_skill.items())
+        )
         return ReloadResult(
             added=added,
             removed=removed,
             preserved=preserved_active,
             deactivation_failures=sorted(deactivation_failures_set),
+            warnings=warnings,
         )
 
     def _persist(self) -> None:

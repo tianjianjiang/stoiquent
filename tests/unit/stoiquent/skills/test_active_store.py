@@ -122,6 +122,18 @@ async def test_drain_pending_awaits_all_in_flight_tasks(
     assert store._pending_tasks == set()  # noqa: SLF001
 
 
+async def test_save_background_preserves_fifo_order(tmp_path: Path) -> None:
+    """Rapid concurrent save_background calls must land in call order;
+    the last-scheduled state wins. Without the internal save lock, two
+    os.replace calls race and the on-disk state is non-deterministic."""
+    store = _make_store(tmp_path)
+    store.save_background(["a"])
+    store.save_background(["a", "b"])
+    store.save_background(["a", "b", "c"])
+    await store.drain_pending()
+    assert store.load() == ["a", "b", "c"]
+
+
 def test_path_property_points_at_active_skills_json(tmp_path: Path) -> None:
     store = _make_store(tmp_path)
     assert store.path.name == "active_skills.json"

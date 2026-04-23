@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from pathlib import Path
+
+import pytest
 
 from stoiquent.models import PersistenceConfig
 from stoiquent.skills.active_store import ActiveSkillsStore
@@ -39,8 +42,8 @@ class FakeMCPBridge:
 
     started: list[str] = field(default_factory=list)
     stopped: list[str] = field(default_factory=list)
-    start_raises: dict[str, Exception] = field(default_factory=dict)
-    stop_raises: dict[str, Exception] = field(default_factory=dict)
+    start_raises: dict[str, BaseException] = field(default_factory=dict)
+    stop_raises: dict[str, BaseException] = field(default_factory=dict)
     _next_id: int = 0
 
     async def start_server(self, server_def: MCPServerDef) -> str:
@@ -360,3 +363,76 @@ async def test_catalog_property_exposes_underlying_catalog() -> None:
     skills = {"alpha": _make_skill("alpha")}
     controller, _, _ = _controller(skills)
     assert controller.catalog.skills == skills
+
+
+async def test_activate_cancellation_rolls_back_and_propagates() -> None:
+    skill = _make_skill(
+        "gh",
+        mcp_servers=[
+            MCPServerDef(command="ok"),
+            MCPServerDef(command="bad"),
+        ],
+    )
+    controller, bridge, catalog = _controller({"gh": skill})
+    bridge.start_raises["bad"] = asyncio.CancelledError()
+    with pytest.raises(asyncio.CancelledError):
+        await controller.activate("gh")
+    assert bridge.stopped == ["srv-1"]
+    assert catalog.skills["gh"].active is False
+
+
+async def test_activate_surfaces_rollback_leaks_via_warnings() -> None:
+    skill = _make_skill(
+        "gh",
+        mcp_servers=[
+            MCPServerDef(command="ok"),
+            MCPServerDef(command="bad"),
+        ],
+    )
+    controller, bridge, _ = _controller({"gh": skill})
+    bridge.start_raises["bad"] = RuntimeError("start boom")
+    bridge.stop_raises["srv-1"] = RuntimeError("stop boom")
+    result = await controller.activate("gh")
+    assert result.success is False
+    assert "mcp-error" in result.reason
+    assert len(result.warnings) == 1
+    assert "gh" in result.warnings[0]
+    assert "srv-1" in result.warnings[0]
+
+
+async def test_reload_cancellation_propagates() -> None:
+    skill = _make_skill("alpha", mcp_servers=[MCPServerDef(command="mcp-a")])
+    controller, bridge, _ = _controller({"alpha": skill})
+    await controller.activate("alpha")
+    bridge.stop_raises["srv-1"] = asyncio.CancelledError()
+    with pytest.raises(asyncio.CancelledError):
+        await controller.reload_from_disk(lambda: {})
+
+
+async def test_reload_dedupes_failures_for_multi_server_skill() -> None:
+    skill = _make_skill(
+        "alpha",
+        mcp_servers=[
+            MCPServerDef(command="a"),
+            MCPServerDef(command="b"),
+        ],
+    )
+    controller, bridge, _ = _controller({"alpha": skill})
+    await controller.activate("alpha")
+    bridge.stop_raises["srv-1"] = RuntimeError("boom a")
+    bridge.stop_raises["srv-2"] = RuntimeError("boom b")
+    result = await controller.reload_from_disk(lambda: {})
+    assert result.deactivation_failures == ["alpha"]
+    assert len(result.warnings) == 1
+    assert "alpha" in result.warnings[0]
+    assert "srv-1" in result.warnings[0]
+    assert "srv-2" in result.warnings[0]
+
+
+async def test_deactivate_cancellation_propagates() -> None:
+    skill = _make_skill("gh", mcp_servers=[MCPServerDef(command="gh-mcp")])
+    controller, bridge, _ = _controller({"gh": skill})
+    await controller.activate("gh")
+    bridge.stop_raises["srv-1"] = asyncio.CancelledError()
+    with pytest.raises(asyncio.CancelledError):
+        await controller.deactivate("gh")

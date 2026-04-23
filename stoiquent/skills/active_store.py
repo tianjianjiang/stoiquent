@@ -46,6 +46,11 @@ class ActiveSkillsStore:
         self._base_dir = Path(config.data_dir).expanduser().resolve()
         self._path = self._base_dir / self._FILENAME
         self._pending_tasks: set[asyncio.Task[None]] = set()
+        # Serializes concurrent save tasks so rapid toggles don't end up
+        # writing stale state last. Without this, two tasks saving
+        # different snapshots race via os.replace and the final on-disk
+        # state depends on task completion order.
+        self._save_lock = asyncio.Lock()
 
     def ensure_dirs(self) -> None:
         self._base_dir.mkdir(parents=True, exist_ok=True)
@@ -120,12 +125,15 @@ class ActiveSkillsStore:
             raise
 
     async def save(self, active: list[str]) -> None:
-        await asyncio.to_thread(self.save_sync, list(active))
+        async with self._save_lock:
+            await asyncio.to_thread(self.save_sync, list(active))
 
     def save_background(self, active: list[str]) -> None:
         """Fire-and-forget save. Snapshots ``active`` so in-flight mutations
-        don't corrupt the pending write. Errors are logged and suppressed;
-        await ``drain_pending`` to wait for in-flight tasks."""
+        don't corrupt the pending write, and routes through :meth:`save`
+        so concurrent calls are serialized by ``_save_lock`` in FIFO
+        order. Errors are logged and suppressed; await ``drain_pending``
+        to wait for in-flight tasks."""
         snapshot = list(active)
 
         async def _do_save() -> None:
