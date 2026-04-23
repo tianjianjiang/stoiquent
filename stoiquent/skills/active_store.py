@@ -8,7 +8,7 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from stoiquent.models import PersistenceConfig
 
@@ -77,7 +77,7 @@ class ActiveSkillsStore:
                 "(external edit or concurrent write race)"
             )
             return []
-        except (json.JSONDecodeError, OSError, ValueError) as e:
+        except (json.JSONDecodeError, OSError, ValueError, ValidationError) as e:
             logger.warning("Failed to load active_skills.json", exc_info=True)
             raise ActiveSkillsLoadError(
                 f"active_skills.json at {self._path} exists but could not be loaded"
