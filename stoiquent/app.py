@@ -79,7 +79,13 @@ def start(config: AppConfig) -> None:
             return
         if not names:
             return
-        results = await controller.activate_many(names)
+        try:
+            results = await controller.activate_many(names)
+        except Exception:
+            logger.exception(
+                "Unhandled error restoring active skills; continuing startup"
+            )
+            return
         for name, result in results.items():
             if not result.success:
                 logger.warning(

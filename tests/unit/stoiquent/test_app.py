@@ -254,6 +254,79 @@ async def test_restore_is_noop_when_active_store_damaged() -> None:
         mock_controller_cls.return_value.activate_many.assert_not_called()
 
 
+async def test_restore_logs_per_skill_activation_failure(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from unittest.mock import AsyncMock
+
+    from stoiquent.skills.controller import ActivationResult
+
+    config = AppConfig(
+        providers={"p": ProviderConfig(base_url="http://x", model="m")},
+        default_provider="p",
+    )
+    with patch("stoiquent.app.ui") as mock_ui, \
+         patch("stoiquent.app.app") as mock_app, \
+         patch("stoiquent.app.ActiveSkillsStore") as mock_active_store_cls, \
+         patch("stoiquent.app.SkillController") as mock_controller_cls:
+        mock_ui.run = MagicMock()
+        mock_ui.page = MagicMock(return_value=lambda f: f)
+        mock_active_store_cls.return_value.load.return_value = ["ghost-skill"]
+        mock_controller_cls.return_value.activate_many = AsyncMock(
+            return_value={
+                "ghost-skill": ActivationResult(
+                    success=False, reason="unknown-skill"
+                )
+            }
+        )
+
+        from stoiquent.app import start
+
+        start(config)
+
+        hook = mock_app.on_startup.call_args_list[0].args[0]
+        with caplog.at_level("WARNING", logger="stoiquent.app"):
+            await hook()
+        assert any(
+            "ghost-skill" in record.getMessage()
+            and "unknown-skill" in record.getMessage()
+            for record in caplog.records
+        ), "per-skill failure should be logged with name and reason"
+
+
+async def test_restore_swallows_unexpected_error_and_logs_exception(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from unittest.mock import AsyncMock
+
+    config = AppConfig(
+        providers={"p": ProviderConfig(base_url="http://x", model="m")},
+        default_provider="p",
+    )
+    with patch("stoiquent.app.ui") as mock_ui, \
+         patch("stoiquent.app.app") as mock_app, \
+         patch("stoiquent.app.ActiveSkillsStore") as mock_active_store_cls, \
+         patch("stoiquent.app.SkillController") as mock_controller_cls:
+        mock_ui.run = MagicMock()
+        mock_ui.page = MagicMock(return_value=lambda f: f)
+        mock_active_store_cls.return_value.load.return_value = ["a"]
+        mock_controller_cls.return_value.activate_many = AsyncMock(
+            side_effect=RuntimeError("mcp-bridge-down")
+        )
+
+        from stoiquent.app import start
+
+        start(config)
+
+        hook = mock_app.on_startup.call_args_list[0].args[0]
+        with caplog.at_level("ERROR", logger="stoiquent.app"):
+            await hook()
+        assert any(
+            "Unhandled error restoring active skills" in record.getMessage()
+            for record in caplog.records
+        ), "broad except path should emit logger.exception"
+
+
 async def test_restore_is_noop_when_no_persisted_skills() -> None:
     from unittest.mock import AsyncMock
 
