@@ -166,7 +166,7 @@ Inspired by [Claude Cowork](https://www.anthropic.com/product/claude-cowork) (UX
 - [MUST] File browser: tree view of project folder, click to preview
 - [MUST] Project model: folder + instructions + scoped memory. Sessions grouped by project. Inspired by [Claude Cowork Projects](https://support.claude.com/en/articles/14116274-organize-your-tasks-with-projects-in-claude-cowork)
 - [MUST] Session status: running / completed / failed. Sidebar filterable by project and status
-- [MUST] Skills panel: discovered skills with activate/deactivate toggle
+- [MUST] Skills management surfaced across three coordinated views: a dedicated full-width manager overlay (search, source-grouped rows with version/tags/MCP-deps, View SKILL.md, Reload-from-disk), a header quick-toggle menu for per-skill activation without navigating away from chat, and a compact active-skills summary in the sidebar Skills tab that links to the manager. All three surfaces read from and mutate via a single `SkillController` so toggles drive MCP lifecycle (§119/§121) and persist across restart. Pattern derives from AnythingLLM's Settings > Agent Skills + Tools chat-bar toggle and Claude.ai's Customize > Skills; see `stoiquent/ui/skills_manager.py`, `skills_header.py`, and the sidebar summary in `sidebar.py`.
 - [SHOULD] Provider switching via dropdown
 
 </required>
