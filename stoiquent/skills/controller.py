@@ -23,12 +23,22 @@ class ActivationResult:
     ``success=True`` with ``reason in {"activated", "already-active",
     "deactivated", "already-inactive", "deactivated-with-cleanup-errors"}``
     means the skill is in the requested state. ``success=False`` carries
-    a human-readable reason (``"unknown-skill"`` or ``"mcp-error: ..."``)
-    suitable for ``ui.notify``.
+    a machine-readable reason — either ``"unknown-skill"`` or a
+    ``"mcp-error: ..."`` prefix whose suffix is the formatted exception
+    (the suffix is not a stable contract — UIs should match on the
+    prefix only).
+
+    ``warnings`` is a tuple of short human-readable strings describing
+    partial failures the user should see even on ``success=True`` — for
+    example, an MCP server that failed to stop during deactivation, or
+    a server that leaked during rollback of a failed activation. UI
+    callers MUST render warnings regardless of ``success`` so silent
+    subprocess leaks don't go unnoticed.
     """
 
     success: bool
     reason: str
+    warnings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -37,7 +47,9 @@ class ReloadResult:
 
     Use ``added``/``removed`` to render toast summaries; use
     ``deactivation_failures`` to warn about MCP cleanup that raised
-    during reconciliation.
+    during reconciliation. ``deactivation_failures`` is a sorted list
+    with no duplicates — a skill is listed at most once even if several
+    of its MCP servers failed to stop.
     """
 
     added: list[str] = field(default_factory=list)
@@ -58,6 +70,15 @@ class SkillController:
     concurrent toggles from different surfaces (header menu, manager
     dialog, sidebar) can't interleave MCP start/stop with catalog
     mutations.
+
+    The lock is deliberately held across :meth:`MCPBridge.start_server`
+    and :meth:`MCPBridge.stop_server`. Those calls spawn a subprocess,
+    open stdio pipes, and await ``session.initialize`` +
+    ``session.list_tools`` — so a slow-to-spawn skill blocks every
+    other surface's toggle for the duration. This trades responsiveness
+    for the ``_skill_servers`` ↔ catalog consistency guarantee; a
+    future optimization to move MCP calls outside the lock must
+    preserve that invariant (e.g. via per-skill locks keyed by name).
     """
 
     def __init__(
@@ -109,18 +130,38 @@ class SkillController:
                 for server_def in skill.meta.mcp_servers:
                     server_id = await self._mcp.start_server(server_def)
                     started.append(server_id)
-            except Exception as exc:
+            except BaseException as exc:
+                # Catch BaseException — asyncio.CancelledError inherits from
+                # it in 3.8+ and would otherwise leak started subprocesses.
                 logger.exception(
-                    "Failed to start MCP servers for skill %s; rolling back", name
+                    "Failed to start MCP servers for skill %s; rolling back",
+                    name,
                 )
+                rollback_failures: list[str] = []
                 for sid in started:
                     try:
                         await self._mcp.stop_server(sid)
-                    except Exception:
+                    except BaseException:
+                        rollback_failures.append(sid)
                         logger.exception(
-                            "Failed to stop partially-started MCP server %s", sid
+                            "Failed to stop partially-started MCP server %s "
+                            "for skill %s",
+                            sid,
+                            name,
                         )
-                return ActivationResult(False, f"mcp-error: {exc}")
+                warnings = (
+                    (
+                        f"MCP rollback leaked {len(rollback_failures)} server(s) "
+                        f"for '{name}': {','.join(rollback_failures)}",
+                    )
+                    if rollback_failures
+                    else ()
+                )
+                if not isinstance(exc, Exception):
+                    raise
+                return ActivationResult(
+                    False, f"mcp-error: {exc}", warnings=warnings
+                )
 
             self._skill_servers[name] = started
             self._catalog.activate(name)
@@ -138,12 +179,12 @@ class SkillController:
                 return ActivationResult(True, "already-inactive")
 
             server_ids = self._skill_servers.pop(name, [])
-            cleanup_failed = False
+            failed_ids: list[str] = []
             for sid in server_ids:
                 try:
                     await self._mcp.stop_server(sid)
-                except Exception:
-                    cleanup_failed = True
+                except BaseException:
+                    failed_ids.append(sid)
                     logger.exception(
                         "Failed to stop MCP server %s for skill %s", sid, name
                     )
@@ -152,10 +193,16 @@ class SkillController:
             self._persist()
 
         self._notify()
-        reason = (
-            "deactivated-with-cleanup-errors" if cleanup_failed else "deactivated"
-        )
-        return ActivationResult(True, reason)
+        if failed_ids:
+            return ActivationResult(
+                True,
+                "deactivated-with-cleanup-errors",
+                warnings=(
+                    f"MCP cleanup failed for '{name}': "
+                    f"{','.join(failed_ids)} — subprocess(es) may still be running",
+                ),
+            )
+        return ActivationResult(True, "deactivated")
 
     async def activate_many(self, names: list[str]) -> dict[str, ActivationResult]:
         """Activate several skills in sequence. Returns per-name outcomes so
@@ -169,11 +216,24 @@ class SkillController:
     async def reload_from_disk(
         self, discover: Callable[[], dict[str, Skill]]
     ) -> ReloadResult:
-        """Re-run ``discover`` and reconcile the catalog with the result.
+        """Re-run ``discover`` and reconcile the catalog via
+        :meth:`SkillCatalog.replace`.
 
-        Skills that disappeared while active are deactivated (their MCP
-        servers are stopped). Skills that remain keep their active flag.
-        Newly-discovered skills start inactive.
+        Reconciliation semantics:
+
+        - Skills absent from the new discovery set are **dropped from
+          the catalog entirely** (not put through
+          :meth:`deactivate`); their MCP servers are stopped
+          synchronously.
+        - Skills that remain keep their active flag — they are
+          re-cloned with ``active=True`` in the new catalog.
+        - Newly-discovered skills start inactive.
+
+        Subscribers fire exactly once after the full swap, not per
+        skill. ``deactivation_failures`` lists (sorted, deduplicated)
+        names whose MCP cleanup raised — the catalog swap proceeds
+        regardless, so UI callers must surface this list to warn the
+        user about potentially-leaked subprocesses.
         """
         async with self._lock:
             prev_active = {s.meta.name for s in self._catalog.get_active_skills()}
@@ -186,14 +246,14 @@ class SkillController:
             preserved_active = sorted(prev_active & new_names)
             vanished_active = sorted(prev_active - new_names)
 
-            deactivation_failures: list[str] = []
+            deactivation_failures_set: set[str] = set()
             for name in vanished_active:
                 server_ids = self._skill_servers.pop(name, [])
                 for sid in server_ids:
                     try:
                         await self._mcp.stop_server(sid)
-                    except Exception:
-                        deactivation_failures.append(name)
+                    except BaseException:
+                        deactivation_failures_set.add(name)
                         logger.exception(
                             "Failed to stop MCP server %s for vanished skill %s",
                             sid,
@@ -219,7 +279,7 @@ class SkillController:
             added=added,
             removed=removed,
             preserved=preserved_active,
-            deactivation_failures=deactivation_failures,
+            deactivation_failures=sorted(deactivation_failures_set),
         )
 
     def _persist(self) -> None:
@@ -231,4 +291,6 @@ class SkillController:
             try:
                 cb()
             except Exception:
-                logger.exception("SkillController subscriber raised")
+                logger.exception(
+                    "SkillController subscriber %r raised during notify", cb
+                )

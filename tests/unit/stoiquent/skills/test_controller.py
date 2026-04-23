@@ -159,7 +159,11 @@ async def test_deactivate_reports_cleanup_errors_as_nonfatal() -> None:
     await controller.activate("gh")
     bridge.stop_raises["srv-1"] = RuntimeError("pipe broken")
     result = await controller.deactivate("gh")
-    assert result == ActivationResult(True, "deactivated-with-cleanup-errors")
+    assert result.success is True
+    assert result.reason == "deactivated-with-cleanup-errors"
+    assert len(result.warnings) == 1
+    assert "gh" in result.warnings[0]
+    assert "srv-1" in result.warnings[0]
     assert catalog.skills["gh"].active is False
 
 
@@ -230,6 +234,47 @@ async def test_failed_activation_does_not_persist(tmp_path: Path) -> None:
     assert controller._store is not None  # noqa: SLF001
     await controller._store.drain_pending()  # noqa: SLF001
     assert controller._store.load() == []  # noqa: SLF001
+
+
+async def test_deactivate_persists_empty_active_set(tmp_path: Path) -> None:
+    controller, _, _ = _controller(
+        {"hello": _make_skill("hello")}, tmp_path=tmp_path
+    )
+    await controller.activate("hello")
+    await controller.deactivate("hello")
+    assert controller._store is not None  # noqa: SLF001
+    await controller._store.drain_pending()  # noqa: SLF001
+    assert controller._store.load() == []  # noqa: SLF001
+
+
+async def test_reload_persists_updated_active_set(tmp_path: Path) -> None:
+    skill_a = _make_skill("alpha", mcp_servers=[MCPServerDef(command="mcp-a")])
+    skill_b = _make_skill("beta")
+    controller, _, _ = _controller(
+        {"alpha": skill_a, "beta": skill_b}, tmp_path=tmp_path
+    )
+    await controller.activate("alpha")
+    await controller.activate("beta")
+    assert controller._store is not None  # noqa: SLF001
+    await controller._store.drain_pending()  # noqa: SLF001
+    assert sorted(controller._store.load()) == ["alpha", "beta"]  # noqa: SLF001
+
+    await controller.reload_from_disk(lambda: {"beta": skill_b})
+    await controller._store.drain_pending()  # noqa: SLF001
+    assert controller._store.load() == ["beta"]  # noqa: SLF001
+
+
+async def test_reload_preserves_skill_servers_mapping_for_preserved_skills() -> None:
+    skill_a = _make_skill("alpha", mcp_servers=[MCPServerDef(command="mcp-a")])
+    controller, bridge, _ = _controller({"alpha": skill_a})
+    await controller.activate("alpha")
+    assert controller._skill_servers["alpha"] == ["srv-1"]  # noqa: SLF001
+
+    await controller.reload_from_disk(lambda: {"alpha": skill_a})
+
+    assert controller._skill_servers["alpha"] == ["srv-1"]  # noqa: SLF001
+    await controller.deactivate("alpha")
+    assert bridge.stopped == ["srv-1"]
 
 
 async def test_activate_many_returns_per_name_results() -> None:
