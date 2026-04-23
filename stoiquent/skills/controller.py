@@ -67,6 +67,15 @@ class ReloadResult:
     deactivation_failures: list[str] = field(default_factory=list)
     warnings: tuple[str, ...] = ()
 
+    def __post_init__(self) -> None:
+        if len(self.warnings) != len(self.deactivation_failures):
+            raise ValueError(
+                "ReloadResult.warnings must pair 1:1 with "
+                "deactivation_failures; got "
+                f"{len(self.warnings)} warnings vs "
+                f"{len(self.deactivation_failures)} deactivation_failures"
+            )
+
 
 class SkillController:
     """Single source of truth for skill activation.

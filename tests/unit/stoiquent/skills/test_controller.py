@@ -9,7 +9,7 @@ import pytest
 from stoiquent.models import PersistenceConfig
 from stoiquent.skills.active_store import ActiveSkillsStore
 from stoiquent.skills.catalog import SkillCatalog
-from stoiquent.skills.controller import ActivationResult, SkillController
+from stoiquent.skills.controller import ActivationResult, ReloadResult, SkillController
 from stoiquent.skills.models import MCPServerDef, Skill, SkillMeta
 
 
@@ -436,3 +436,25 @@ async def test_deactivate_cancellation_propagates() -> None:
     bridge.stop_raises["srv-1"] = asyncio.CancelledError()
     with pytest.raises(asyncio.CancelledError):
         await controller.deactivate("gh")
+
+
+def test_reload_result_rejects_mismatched_warnings_and_failures() -> None:
+    """ReloadResult enforces the pairing invariant between ``warnings``
+    and ``deactivation_failures`` at construction. A runtime assertion
+    upgrades the docstring contract (1:1, same sort order) to a
+    structural guarantee callers can rely on when index-correlating."""
+    with pytest.raises(ValueError, match="pair 1:1"):
+        ReloadResult(
+            deactivation_failures=["alpha", "beta"],
+            warnings=("only-one",),
+        )
+    with pytest.raises(ValueError, match="pair 1:1"):
+        ReloadResult(
+            deactivation_failures=["alpha"],
+            warnings=("first", "second"),
+        )
+    ReloadResult()
+    ReloadResult(
+        deactivation_failures=["alpha"],
+        warnings=("matched",),
+    )
