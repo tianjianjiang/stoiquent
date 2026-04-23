@@ -398,6 +398,83 @@ async def test_manager_refreshes_on_controller_events(user: User) -> None:
     assert controller.catalog.skills["greet"].active is True
 
 
+@pytest.mark.asyncio
+async def test_manager_toggle_renders_deactivation_cleanup_warnings(
+    user: User, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Deactivate returns success=True with reason="deactivated-with-
+    cleanup-errors" and a populated ``warnings`` tuple when MCP cleanup
+    leaked. The UI previously only notified on success=False, so the
+    user never saw the leak. Each warning string must render as a
+    ui.notify."""
+    skill = _skill("leaky", mcp_servers=[MCPServerDef(command="x")], active=False)
+    controller = _controller({"leaky": skill})
+    await controller.activate("leaky")
+    assert isinstance(controller._mcp, _FakeMCPBridge)  # noqa: SLF001
+    controller._mcp.stop_raises["srv-1"] = RuntimeError("cleanup exploded")  # noqa: SLF001
+
+    manager_ref: list[SkillsManager] = []
+
+    @ui.page("/test-deactivate-cleanup-warning")
+    async def page() -> None:
+        manager = SkillsManager(controller)
+        manager.build()
+        manager.open()
+        manager_ref.append(manager)
+
+    await user.open("/test-deactivate-cleanup-warning")
+    with caplog.at_level(logging.ERROR, logger="stoiquent.skills.controller"):
+        with patch("stoiquent.ui.skills_manager.ui.notify") as mock_notify:
+            await manager_ref[0]._on_toggle("leaky", False)  # noqa: SLF001
+    warning_messages = [
+        c.args[0] for c in mock_notify.call_args_list if c.args
+    ]
+    assert any(
+        "leaky" in msg and "MCP cleanup failed" in msg
+        for msg in warning_messages
+    ), f"leak warning should surface to UI; got {warning_messages!r}"
+    caplog.clear()
+
+
+@pytest.mark.asyncio
+async def test_manager_reload_renders_warnings_not_raw_failure_names(
+    user: User, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Reload should render ``ReloadResult.warnings`` (richer — contains
+    leaked server ids) rather than only the bare name list in
+    ``deactivation_failures``."""
+    vanishing = _skill(
+        "vanisher", mcp_servers=[MCPServerDef(command="x")], active=False
+    )
+    controller = _controller({"vanisher": vanishing})
+    await controller.activate("vanisher")
+    assert isinstance(controller._mcp, _FakeMCPBridge)  # noqa: SLF001
+    controller._mcp.stop_raises["srv-1"] = RuntimeError("leak-srv-1")  # noqa: SLF001
+
+    manager_ref: list[SkillsManager] = []
+
+    @ui.page("/test-reload-warnings")
+    async def page() -> None:
+        manager = SkillsManager(
+            controller, discover=lambda: {}
+        )
+        manager.build()
+        manager.open()
+        manager_ref.append(manager)
+
+    await user.open("/test-reload-warnings")
+    with caplog.at_level(logging.ERROR, logger="stoiquent.skills.controller"):
+        with patch("stoiquent.ui.skills_manager.ui.notify") as mock_notify:
+            await manager_ref[0]._on_reload()  # noqa: SLF001
+    warning_messages = [
+        c.args[0] for c in mock_notify.call_args_list if c.args
+    ]
+    assert any(
+        "vanisher" in msg and "srv-" in msg for msg in warning_messages
+    ), f"warning with server id expected; got {warning_messages!r}"
+    caplog.clear()
+
+
 def test_teardown_unsubscribes_from_controller() -> None:
     controller = Mock()
     controller.subscribe.return_value = Mock()

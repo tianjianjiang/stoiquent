@@ -656,3 +656,10 @@ class Sidebar:
     def _open_skills_manager(self) -> None:
         if self._skills_manager is not None:
             self._skills_manager.open()
+
+    def teardown(self) -> None:
+        """Release the controller subscription so stale sidebars don't
+        keep receiving events after the page disconnects. Idempotent."""
+        if self._skills_unsubscribe is not None:
+            self._skills_unsubscribe()
+            self._skills_unsubscribe = None

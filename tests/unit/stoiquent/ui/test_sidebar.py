@@ -1838,3 +1838,30 @@ async def test_delete_project_dialog_cancel_button_leaves_state_untouched(
     assert session.project_instructions == "keep"
 
 
+def test_sidebar_teardown_releases_controller_subscription() -> None:
+    """_skills_unsubscribe is stored when the skills tab wires the
+    subscribe hook. teardown() must invoke the stored unsubscribe so
+    sidebars don't keep receiving controller events after the page
+    disconnects, and must be safe to call twice."""
+    session = Session(provider=FakeProvider())
+    project_store = Mock()
+    sidebar = Sidebar(session, None, lambda *_: None, project_store)
+    unsubscribe = Mock()
+    sidebar._skills_unsubscribe = unsubscribe  # noqa: SLF001
+
+    sidebar.teardown()
+    unsubscribe.assert_called_once_with()
+    assert sidebar._skills_unsubscribe is None  # noqa: SLF001
+
+    sidebar.teardown()  # idempotent
+    unsubscribe.assert_called_once_with()  # still only one call
+
+
+def test_sidebar_teardown_is_noop_when_never_subscribed() -> None:
+    """Sidebars constructed without a controller never subscribe, so
+    teardown must not crash."""
+    session = Session(provider=FakeProvider())
+    sidebar = Sidebar(session, None, lambda *_: None, Mock())
+    sidebar.teardown()  # must not raise
+
+

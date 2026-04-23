@@ -345,3 +345,39 @@ def test_apply_session_switch_loads_new_project_instructions(
 
     assert session.project_id == "projB"
     assert session.project_instructions == "B-only guidance"
+
+
+@pytest.mark.asyncio
+async def test_layout_registers_client_disconnect_teardown(
+    user: User, tmp_path: Path
+) -> None:
+    """Regression guard: layout.render must register ``ui.context.client.
+    on_disconnect(...)`` so SkillsManager and Sidebar release controller
+    subscriptions when the browser disconnects. We verify by spying on
+    ``Client.on_disconnect`` and asserting at least one handler was
+    registered during page render."""
+    session = Session(provider=FakeProvider())
+    project_store = make_project_store(tmp_path)
+
+    from nicegui.client import Client
+
+    original = Client.on_disconnect
+    captured: list[object] = []
+
+    def _spy(self: Client, cb: object) -> None:
+        captured.append(cb)
+        original(self, cb)
+
+    Client.on_disconnect = _spy  # type: ignore[method-assign,assignment]
+    try:
+        @ui.page("/test-teardown-registration")
+        async def page() -> None:
+            await layout.render(session, None, None, project_store=project_store)
+
+        await user.open("/test-teardown-registration")
+    finally:
+        Client.on_disconnect = original  # type: ignore[method-assign]
+
+    assert captured, "layout.render must register an on_disconnect handler"
+    assert callable(captured[-1])
+    captured[-1]()  # must be safe to invoke — teardowns are idempotent

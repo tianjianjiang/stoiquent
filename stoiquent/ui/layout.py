@@ -79,6 +79,12 @@ async def render(
         with splitter.after:
             chat.render()
 
+    def _teardown_page() -> None:
+        skills_manager.teardown()
+        sidebar.teardown()
+
+    ui.context.client.on_disconnect(_teardown_page)
+
 
 def _load_project_instructions(
     project_store: ProjectStore | None, project_id: str | None

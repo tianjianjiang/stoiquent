@@ -186,6 +186,8 @@ class SkillsManager:
             if active
             else await self._controller.deactivate(name)
         )
+        for warning in result.warnings:
+            ui.notify(warning, type="warning")
         if not result.success:
             verb = "activate" if active else "deactivate"
             ui.notify(
@@ -210,12 +212,8 @@ class SkillsManager:
         if not summary_parts:
             summary_parts.append("no changes")
         ui.notify("Reload: " + ", ".join(summary_parts))
-        if result.deactivation_failures:
-            ui.notify(
-                "MCP cleanup failed for: "
-                + ", ".join(result.deactivation_failures),
-                type="warning",
-            )
+        for warning in result.warnings:
+            ui.notify(warning, type="warning")
 
     def _open_view_dialog(self, skill: Skill) -> None:
         with ui.dialog().props("maximized") as view, ui.card().classes(
