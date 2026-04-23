@@ -63,7 +63,10 @@ async def render(
                 value=config.default_provider,
                 on_change=lambda e: on_provider_change(e.value),
             ).classes("w-40").props("dense").mark("provider-select")
-        SkillsHeaderMenu(session.controller, manager=skills_manager).build()
+        skills_header = SkillsHeaderMenu(
+            session.controller, manager=skills_manager
+        )
+        skills_header.build()
         ui.label("Local LLM Agent").classes("text-caption opacity-60")
 
     skills_manager.build()
@@ -83,11 +86,12 @@ async def render(
             chat.render()
 
     def _teardown_page() -> None:
-        # Exception-isolate the two teardowns: a misbehaving unsubscribe
+        # Exception-isolate the teardowns: a misbehaving unsubscribe
         # callable must not prevent the sibling teardown from running, or
         # the "leak" the teardown was meant to plug survives silently.
         for label, teardown in (
             ("skills_manager", skills_manager.teardown),
+            ("skills_header", skills_header.teardown),
             ("sidebar", sidebar.teardown),
         ):
             try:

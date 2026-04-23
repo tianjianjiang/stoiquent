@@ -18,16 +18,24 @@ from stoiquent.ui.skills_header import SkillsHeaderMenu
 class _FakeMCPBridge(MCPBridge):
     def __init__(self) -> None:
         self._next = 0
+        self.started: list[str] = []
+        self.stopped: list[str] = []
+        self.stop_raises: dict[str, Exception] = {}
 
     async def start_server(self, server_def: MCPServerDef) -> str:
         self._next += 1
-        return f"srv-{self._next}"
+        sid = f"srv-{self._next}"
+        self.started.append(sid)
+        return sid
 
     async def stop_server(self, server_id: str) -> None:
-        pass
+        self.stopped.append(server_id)
+        if server_id in self.stop_raises:
+            raise self.stop_raises[server_id]
 
     async def stop_all(self) -> None:
-        pass
+        for sid in list(self.started):
+            await self.stop_server(sid)
 
 
 def _skill(
@@ -156,14 +164,25 @@ async def test_header_manage_button_opens_manager(user: User) -> None:
 async def test_header_manage_button_disabled_when_manager_missing(
     user: User,
 ) -> None:
+    """The previous version only asserted the button rendered — a
+    regression that dropped the ``disable()`` call would silently ship a
+    dead-but-clickable button. Capture the button element and assert its
+    disabled state on the widget props."""
     controller = _controller({"alpha": _skill("alpha")})
+    menu_ref: list[SkillsHeaderMenu] = []
 
     @ui.page("/test-header-no-manager")
     async def page() -> None:
-        SkillsHeaderMenu(controller, manager=None).build()
+        menu = SkillsHeaderMenu(controller, manager=None)
+        menu.build()
+        menu_ref.append(menu)
 
     await user.open("/test-header-no-manager")
     await user.should_see(marker="skills-header-manage-btn")
+    manage_btn = user.find(marker="skills-header-manage-btn").elements.pop()
+    assert getattr(manage_btn, "enabled", True) is False, (
+        "manage button must be disabled when manager is absent"
+    )
 
 
 @pytest.mark.asyncio
@@ -195,6 +214,42 @@ async def test_header_notifies_on_activation_failure(
         and "gh" in (c.args[0] if c.args else "")
         for c in mock_notify.call_args_list
     )
+    caplog.clear()
+
+
+@pytest.mark.asyncio
+async def test_header_toggle_renders_deactivation_cleanup_warnings(
+    user: User, caplog: pytest.LogCaptureFixture
+) -> None:
+    """SkillsHeaderMenu must honor the same "render result.warnings"
+    contract as SkillsManager — deactivate with cleanup errors returns
+    success=True but populates warnings; the header quick-toggle must
+    surface those to the user."""
+    skill = _skill("leaky", mcp_servers=[MCPServerDef(command="x")])
+    controller = _controller({"leaky": skill})
+    await controller.activate("leaky")
+    assert isinstance(controller._mcp, _FakeMCPBridge)  # noqa: SLF001
+    controller._mcp.stop_raises["srv-1"] = RuntimeError("cleanup exploded")  # noqa: SLF001
+
+    menu_ref: list[SkillsHeaderMenu] = []
+
+    @ui.page("/test-header-deactivate-cleanup-warning")
+    async def page() -> None:
+        menu = SkillsHeaderMenu(controller)
+        menu.build()
+        menu_ref.append(menu)
+
+    await user.open("/test-header-deactivate-cleanup-warning")
+    with caplog.at_level(logging.ERROR, logger="stoiquent.skills.controller"):
+        with patch("stoiquent.ui.skills_header.ui.notify") as mock_notify:
+            await menu_ref[0]._on_toggle("leaky", False)  # noqa: SLF001
+    warning_messages = [
+        c.args[0] for c in mock_notify.call_args_list if c.args
+    ]
+    assert any(
+        "leaky" in msg and "MCP cleanup failed" in msg
+        for msg in warning_messages
+    ), f"leak warning should surface to UI; got {warning_messages!r}"
     caplog.clear()
 
 
