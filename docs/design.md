@@ -101,7 +101,31 @@ data_dir = "~/.stoiquent"
 | Podman rootless default sandbox | Free, daemonless on Linux, no licensing restrictions |
 | Click for CLI | Lightweight, composable subcommands, widely adopted |
 
-## 4. References
+## 4. Skills management surfaces
+
+Three coordinated views expose skill activation; all three read from a
+single `SkillController` (`stoiquent/skills/controller.py`) that composes
+`SkillCatalog`, `MCPBridge`, and `ActiveSkillsStore`. Every mutation
+fans out to subscribed surfaces so their rendered state stays
+consistent without duplicated in-memory copies.
+
+| Surface | Role | Source |
+|---------|------|--------|
+| Header quick-toggle (`skills_header.py`) | Chat-adjacent `Skills · N/M ▾` button → per-skill switch dropdown + "Manage skills…" footer. | Modeled on [AnythingLLM's Tools chat-bar toggle](https://docs.anythingllm.com/agent/custom/introduction). |
+| Sidebar summary (`sidebar.py:_render_skills_tab`) | Compact `Active (N)` summary with active-skill names + "Manage skills…" button. No switches, no detail. | Preserves requirements §164 sidebar tab without cramming the full catalog into 20% width. |
+| Manager overlay (`skills_manager.py`) | Maximized `ui.dialog` with search, source-grouped rows (User/Project/Config), version/tags/MCP-deps badges, View SKILL.md, Reload-from-disk. | Modeled on [Claude.ai's Customize > Skills](https://support.claude.com/en/articles/12512180-use-skills-in-claude) and [AnythingLLM's Settings > Agent Skills](https://docs.anythingllm.com/agent/custom/introduction). |
+
+`SkillController.activate` runs serialized by an `asyncio.Lock`, starts
+any MCP servers declared by the skill (rolling back on partial
+failure), mutates the catalog, persists the active set via
+`ActiveSkillsStore.save_background`, and notifies subscribers.
+`deactivate` is symmetric; MCP cleanup failures are reported but not
+fatal. Startup restore lives in `app.py` (`_restore_active_skills`
+registered on `app.on_startup`), which awaits
+`controller.activate_many(store.load())` so restored skills have their
+MCP servers running before the first page render.
+
+## 5. References
 
 - See [requirements.md 1.3](requirements.md#13-references) for specification and runtime references
 - [Nanobot Agent Loop](https://github.com/HKUDS/nanobot/blob/main/nanobot/agent/loop.py) (reference architecture)
