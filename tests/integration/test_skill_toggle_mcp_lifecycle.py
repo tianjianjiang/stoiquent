@@ -36,8 +36,8 @@ ECHO_SERVER = str(
 # swallowing the bridge's WARNING/ERROR records.
 #
 # Not covered here (deliberately out of scope for this guard):
-#   * init-time pgrep-unusable WARNINGs (fire once at MCPBridge() time,
-#     not during stop_all).
+#   * pgrep-unusable WARNINGs (fire on first ``start_server`` call via
+#     ``_direct_children``, not during stop_all; latched once per process).
 #   * wrapper-command zombies with zero tracked PIDs (would require an
 #     OS-level child-PID snapshot to detect; tracked for follow-up).
 _BRIDGE_CLEANUP_FAILURE_MARKERS: tuple[str, ...] = (
