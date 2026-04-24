@@ -86,16 +86,21 @@ async def render(
             chat.render()
 
     for warning in session.consume_startup_warnings():
-        # Startup warnings describe recovery actions the user should
-        # see — keep them persistent + dismissable rather than auto-
-        # hiding so a user who tabs away doesn't miss the signal.
-        ui.notify(
-            warning,
-            type="warning",
-            multi_line=True,
-            close_button="Dismiss",
-            timeout=0,
-        )
+        # Persistent + dismissable so a user who tabs away doesn't miss
+        # the signal. Re-queue on render failure: consume_startup_warnings
+        # already cleared the list, so an unhandled raise mid-loop would
+        # silently drop the remaining warnings.
+        try:
+            ui.notify(
+                warning,
+                type="warning",
+                multi_line=True,
+                close_button="Dismiss",
+                timeout=0,
+            )
+        except Exception:
+            logger.exception("Failed to surface startup warning; re-queuing")
+            session.startup_warnings.append(warning)
 
     def _teardown_page() -> None:
         # Exception-isolate the teardowns: a misbehaving unsubscribe

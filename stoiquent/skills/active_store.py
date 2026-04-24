@@ -104,6 +104,16 @@ class ActiveSkillsStore:
             return None
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         sidecar = self._path.with_name(f"{self._path.name}.corrupt-{timestamp}")
+        # Sub-second collisions (rapid restart loop, supervisord respawn)
+        # would silently clobber the prior sidecar via os.replace; bump
+        # a numeric suffix so each corrupt snapshot survives for the
+        # manual inspection the docstring promises.
+        counter = 0
+        while sidecar.exists():
+            counter += 1
+            sidecar = self._path.with_name(
+                f"{self._path.name}.corrupt-{timestamp}.{counter}"
+            )
         try:
             os.replace(self._path, sidecar)
         except OSError:

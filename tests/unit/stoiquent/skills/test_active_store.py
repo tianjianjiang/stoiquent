@@ -195,6 +195,45 @@ def test_quarantine_damaged_returns_none_when_file_missing(
     assert store.quarantine_damaged() is None
 
 
+def test_quarantine_damaged_uses_numeric_suffix_on_subsecond_collision(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two damage events within the same wall-clock second must not
+    silently clobber each other — ``os.replace`` is atomic-replace, so a
+    second sidecar at the same path would lose the first's bytes. The
+    docstring promises both snapshots survive for inspection."""
+    from datetime import datetime, timezone
+
+    from stoiquent.skills import active_store as module
+
+    store = _make_store(tmp_path)
+    store.path.parent.mkdir(parents=True, exist_ok=True)
+    store.path.write_text("first damage", encoding="utf-8")
+
+    fixed = datetime(2026, 4, 24, 12, 0, 0, tzinfo=timezone.utc)
+
+    class _FixedClock:
+        @staticmethod
+        def now(tz: object = None) -> datetime:
+            return fixed
+
+    monkeypatch.setattr(module, "datetime", _FixedClock)
+
+    first = store.quarantine_damaged()
+    assert first is not None and first.exists()
+    assert first.read_text(encoding="utf-8") == "first damage"
+
+    store.path.write_text("second damage", encoding="utf-8")
+    second = store.quarantine_damaged()
+
+    assert second is not None and second.exists()
+    assert second != first, "second sidecar must not collide with first"
+    assert first.exists(), "first sidecar must survive a same-second collision"
+    assert first.read_text(encoding="utf-8") == "first damage"
+    assert second.read_text(encoding="utf-8") == "second damage"
+
+
 def test_quarantine_damaged_returns_none_and_logs_on_rename_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
