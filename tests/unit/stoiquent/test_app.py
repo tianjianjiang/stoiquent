@@ -275,6 +275,113 @@ async def test_restore_is_noop_when_active_store_damaged(
         ), f"session.startup_warnings should name the sidecar; got {fake_warnings!r}"
 
 
+async def test_restore_mirrors_user_warning_to_logger_for_headless_visibility(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The user-facing warning text is mirrored to ``logger.warning`` so
+    headless or pre-mount exits (port-in-use, native-window crash) still
+    leave the message on disk — the queued copy is only surfaced on the
+    first page render, which never happens if the app exits before any
+    layout build."""
+    from pathlib import Path
+    from unittest.mock import AsyncMock
+
+    from stoiquent.skills.active_store import ActiveSkillsLoadError
+
+    config = AppConfig(
+        providers={"p": ProviderConfig(base_url="http://x", model="m")},
+        default_provider="p",
+    )
+    with patch("stoiquent.app.ui") as mock_ui, \
+         patch("stoiquent.app.app") as mock_app, \
+         patch("stoiquent.app.ActiveSkillsStore") as mock_active_store_cls, \
+         patch("stoiquent.app.SkillController") as mock_controller_cls, \
+         patch("stoiquent.app.Session") as mock_session_cls:
+        mock_ui.run = MagicMock()
+        mock_ui.page = MagicMock(return_value=lambda f: f)
+        mock_active_store_cls.return_value.load.side_effect = ActiveSkillsLoadError(
+            "damaged"
+        )
+        sidecar_path = Path("/tmp/active_skills.json.corrupt-20260424T000000Z")
+        mock_active_store_cls.return_value.quarantine_damaged.return_value = (
+            sidecar_path
+        )
+        mock_controller_cls.return_value.activate_many = AsyncMock()
+        fake_warnings: list[str] = []
+        mock_session_cls.return_value.startup_warnings = fake_warnings
+
+        from stoiquent.app import start
+
+        start(config)
+
+        hook = mock_app.on_startup.call_args_list[0].args[0]
+        with caplog.at_level("WARNING", logger="stoiquent.app"):
+            await hook()
+
+        warning_records = [
+            r
+            for r in caplog.records
+            if r.levelname == "WARNING"
+            and "Startup warning queued for user" in r.getMessage()
+        ]
+        assert warning_records, (
+            "user-facing warning must be mirrored to logger.warning so"
+            " headless/pre-mount exits still leave the message on disk"
+        )
+        assert str(sidecar_path) in warning_records[0].getMessage()
+        assert "damaged" in warning_records[0].getMessage()
+        caplog.clear()
+
+
+async def test_restore_mirrors_fallback_warning_to_logger(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Symmetric to the success-quarantine mirror test: the
+    quarantine-failed branch's user-facing text is also mirrored."""
+    from unittest.mock import AsyncMock
+
+    from stoiquent.skills.active_store import ActiveSkillsLoadError
+
+    config = AppConfig(
+        providers={"p": ProviderConfig(base_url="http://x", model="m")},
+        default_provider="p",
+    )
+    with patch("stoiquent.app.ui") as mock_ui, \
+         patch("stoiquent.app.app") as mock_app, \
+         patch("stoiquent.app.ActiveSkillsStore") as mock_active_store_cls, \
+         patch("stoiquent.app.SkillController") as mock_controller_cls, \
+         patch("stoiquent.app.Session") as mock_session_cls:
+        mock_ui.run = MagicMock()
+        mock_ui.page = MagicMock(return_value=lambda f: f)
+        mock_active_store_cls.return_value.load.side_effect = ActiveSkillsLoadError(
+            "damaged"
+        )
+        mock_active_store_cls.return_value.quarantine_damaged.return_value = None
+        mock_controller_cls.return_value.activate_many = AsyncMock()
+        fake_warnings: list[str] = []
+        mock_session_cls.return_value.startup_warnings = fake_warnings
+
+        from stoiquent.app import start
+
+        start(config)
+
+        hook = mock_app.on_startup.call_args_list[0].args[0]
+        with caplog.at_level("WARNING", logger="stoiquent.app"):
+            await hook()
+
+        warning_records = [
+            r
+            for r in caplog.records
+            if r.levelname == "WARNING"
+            and "Startup warning queued for user" in r.getMessage()
+        ]
+        assert warning_records, (
+            "fallback warning must also be mirrored to logger.warning"
+        )
+        assert "could not be quarantined" in warning_records[0].getMessage()
+        caplog.clear()
+
+
 async def test_restore_appends_fallback_warning_when_quarantine_fails(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

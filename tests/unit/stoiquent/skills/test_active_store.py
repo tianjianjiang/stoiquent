@@ -200,9 +200,10 @@ def test_quarantine_damaged_uses_numeric_suffix_on_subsecond_collision(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Two damage events within the same wall-clock second must not
-    silently clobber each other — ``os.replace`` is atomic-replace, so a
-    second sidecar at the same path would lose the first's bytes. The
-    docstring promises both snapshots survive for inspection."""
+    silently clobber each other — ``os.replace`` atomically overwrites
+    the destination, so a second sidecar at the same path would silently
+    overwrite the first sidecar's contents and leave only the latest
+    corrupt snapshot. The docstring promises both snapshots survive."""
     from datetime import datetime, timezone
 
     from stoiquent.skills import active_store as module

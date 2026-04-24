@@ -85,22 +85,7 @@ async def render(
         with splitter.after:
             chat.render()
 
-    for warning in session.consume_startup_warnings():
-        # Persistent + dismissable so a user who tabs away doesn't miss
-        # the signal. Re-queue on render failure: consume_startup_warnings
-        # already cleared the list, so an unhandled raise mid-loop would
-        # silently drop the remaining warnings.
-        try:
-            ui.notify(
-                warning,
-                type="warning",
-                multi_line=True,
-                close_button="Dismiss",
-                timeout=0,
-            )
-        except Exception:
-            logger.exception("Failed to surface startup warning; re-queuing")
-            session.startup_warnings.append(warning)
+    _surface_startup_warnings(session)
 
     def _teardown_page() -> None:
         # Exception-isolate the teardowns: a misbehaving unsubscribe
@@ -117,6 +102,32 @@ async def render(
                 logger.exception("Failed to tear down %s on disconnect", label)
 
     ui.context.client.on_disconnect(_teardown_page)
+
+
+def _surface_startup_warnings(session: Session) -> None:
+    """Drain queued startup warnings via ``ui.notify``, re-queueing any
+    that fail to render so the next layout build retries them.
+
+    ``consume_startup_warnings`` already drained ``session.startup_warnings``
+    into a local snapshot, so an unhandled raise mid-loop would silently
+    drop any unprocessed warnings — the user-facing message would be lost.
+    Persistent + dismissable so a user who tabs away doesn't miss the
+    signal. Extracted so this silent-failure recovery path is unit-testable
+    without the NiceGUI ``User`` harness, which installs its own
+    ``UserNotify`` and overrides monkeypatched ``ui.notify`` references.
+    """
+    for warning in session.consume_startup_warnings():
+        try:
+            ui.notify(
+                warning,
+                type="warning",
+                multi_line=True,
+                close_button="Dismiss",
+                timeout=0,
+            )
+        except Exception:
+            logger.exception("Failed to surface startup warning; re-queuing")
+            session.startup_warnings.append(warning)
 
 
 def _load_project_instructions(
