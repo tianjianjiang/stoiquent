@@ -20,6 +20,9 @@ jobs:
       - name: Install dependencies
         run: uv sync --group dev
 
+      # Lint gate: fails the job (no continue-on-error) so style/lint
+      # regressions block merge before the slower test steps run. Rules
+      # and per-file ignores live in pyproject.toml [tool.ruff].
       - name: Lint (ruff)
         run: uv run ruff check .
 
