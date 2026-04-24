@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from stoiquent.sandbox.models import SandboxPolicy
 from stoiquent.sandbox.policy import default_policy, merge_policy
 
 

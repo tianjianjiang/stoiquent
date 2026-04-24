@@ -18,7 +18,6 @@ from stoiquent.agent.session import Session
 from stoiquent.llm.openai_compat import OpenAICompatProvider
 from stoiquent.models import StreamChunk
 from stoiquent.sandbox.apple import AppleContainersBackend
-from stoiquent.sandbox.detect import detect_backend
 from stoiquent.sandbox.policy import default_policy
 from stoiquent.skills.catalog import SkillCatalog
 from stoiquent.skills.models import Skill, SkillMeta, SkillToolDef

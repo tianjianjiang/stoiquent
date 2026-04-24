@@ -38,7 +38,7 @@ def test_should_pass_native_kwargs_for_native_mode() -> None:
         default_provider="p",
     )
     with patch("stoiquent.app.ui") as mock_ui, \
-         patch("stoiquent.app.app") as mock_app:
+         patch("stoiquent.app.app"):
         mock_ui.run = MagicMock()
         mock_ui.page = MagicMock(return_value=lambda f: f)
 
@@ -59,7 +59,7 @@ def test_should_pass_browser_kwargs_for_browser_mode() -> None:
         default_provider="p",
     )
     with patch("stoiquent.app.ui") as mock_ui, \
-         patch("stoiquent.app.app") as mock_app:
+         patch("stoiquent.app.app"):
         mock_ui.run = MagicMock()
         mock_ui.page = MagicMock(return_value=lambda f: f)
 

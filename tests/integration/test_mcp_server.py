@@ -13,7 +13,7 @@ from stoiquent.skills.mcp_app import (
     resolve_app_html,
 )
 from stoiquent.skills.mcp_server import create_mcp_server
-from stoiquent.skills.models import MCPAppDef, Skill, SkillMeta, SkillToolDef
+from stoiquent.skills.models import MCPAppDef, Skill, SkillMeta
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "skills"
 
