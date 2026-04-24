@@ -28,10 +28,18 @@ ECHO_SERVER = str(
     / "echo_server.py"
 )
 
-# Substrings MCPBridge logs when subprocess reap needed SIGKILL escalation
-# or raised during cleanup. If any of these appear in caplog, the bridge
-# left orphans the graceful stop couldn't reclaim — the exact case the
-# integration test's try/finally pattern would otherwise mask.
+# Substrings emitted by the ``stop_server`` and ``_reap_pgroup`` paths
+# in stoiquent/skills/mcp_bridge.py when reap needed SIGKILL escalation
+# or raised during cleanup. If any appear in caplog, the bridge left
+# orphans the graceful stop couldn't reclaim — the exact case the
+# integration test's try/finally pattern would otherwise mask by
+# swallowing the bridge's WARNING/ERROR records.
+#
+# Not covered here (deliberately out of scope for this guard):
+#   * init-time pgrep-unusable WARNINGs (fire once at MCPBridge() time,
+#     not during stop_all).
+#   * wrapper-command zombies with zero tracked PIDs (would require an
+#     OS-level child-PID snapshot to detect; tracked for follow-up).
 _BRIDGE_CLEANUP_FAILURE_MARKERS: tuple[str, ...] = (
     "required SIGKILL fallback",
     "reap raised",
@@ -43,11 +51,16 @@ _BRIDGE_CLEANUP_FAILURE_MARKERS: tuple[str, ...] = (
 def _assert_bridge_cleanly_drained(
     bridge: MCPBridge, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """Guard against the silent-cleanup antipattern where ``stop_all``
-    logs-and-continues: assert there are no server ids left and no
-    MCPBridge warning/error records indicating a leaked subprocess.
-    Reset caplog so NiceGUI-style teardown checks elsewhere don't trip
-    on our captured integration-test records."""
+    """Assert no leaked MCP subprocesses after ``stop_all``.
+
+    ``MCPBridge.stop_server`` wraps ``session.aclose`` and the pgroup
+    reap in ``try/except`` blocks that log at WARNING/ERROR and
+    continue, so a subprocess leak previously showed only as a log
+    record that the test would discard. This helper checks both the
+    bookkeeping invariant (``bridge.server_ids == []``) and the
+    observability channel (no record in
+    :data:`_BRIDGE_CLEANUP_FAILURE_MARKERS`). ``caplog.clear()`` after
+    assertion prevents cross-test bleed on shared fixtures."""
     assert bridge.server_ids == [], (
         f"bridge still tracks server ids after stop_all: {bridge.server_ids}"
     )
