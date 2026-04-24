@@ -21,8 +21,9 @@ jobs:
         run: uv sync --group dev
 
       # Lint gate: fails the job (no continue-on-error) so style/lint
-      # regressions block merge before the slower test steps run. Rules
-      # and per-file ignores live in pyproject.toml [tool.ruff].
+      # regressions block merge before the slower test steps run. Uses
+      # ruff defaults; add [tool.ruff] to pyproject.toml when project-
+      # specific rules are needed.
       - name: Lint (ruff)
         run: uv run ruff check .
 
