@@ -162,3 +162,63 @@ async def test_should_return_empty_list_when_file_vanishes_between_exists_and_re
     monkeypatch.setattr(Path, "read_text", _vanishing_read)
     assert store.load() == []
     monkeypatch.setattr(Path, "read_text", original_read)
+
+
+def test_quarantine_damaged_renames_file_with_iso_timestamp_suffix(
+    tmp_path: Path,
+) -> None:
+    """A damaged file is moved aside under a sidecar name that (a)
+    preserves the original contents for manual inspection and (b)
+    contains a timestamp so multiple damage events don't collide."""
+    store = _make_store(tmp_path)
+    store.path.parent.mkdir(parents=True, exist_ok=True)
+    store.path.write_text("corrupt bytes", encoding="utf-8")
+
+    sidecar = store.quarantine_damaged()
+    assert sidecar is not None
+    assert not store.path.exists()
+    assert sidecar.exists()
+    assert sidecar.read_text(encoding="utf-8") == "corrupt bytes"
+    assert sidecar.name.startswith("active_skills.json.corrupt-")
+    assert sidecar.name.endswith("Z"), (
+        "sidecar suffix should be an ISO-8601 timestamp ending with Z"
+    )
+
+
+def test_quarantine_damaged_returns_none_when_file_missing(
+    tmp_path: Path,
+) -> None:
+    """Guard against callers invoking quarantine on an already-absent
+    file (e.g. a racing external process cleaned it up between load and
+    quarantine). Must be a silent no-op, not a raise."""
+    store = _make_store(tmp_path)
+    assert store.quarantine_damaged() is None
+
+
+def test_quarantine_damaged_returns_none_and_logs_on_rename_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """If the rename itself fails (read-only filesystem, permissions),
+    return None and log rather than raise. Quarantine is a recovery
+    path — it must never abort the startup sequence that invoked it."""
+    import logging
+    import os
+
+    store = _make_store(tmp_path)
+    store.path.parent.mkdir(parents=True, exist_ok=True)
+    store.path.write_text("corrupt", encoding="utf-8")
+
+    def _replace_raises(src: object, dst: object) -> None:
+        raise PermissionError("read-only filesystem")
+
+    monkeypatch.setattr(os, "replace", _replace_raises)
+    with caplog.at_level(logging.ERROR, logger="stoiquent.skills.active_store"):
+        result = store.quarantine_damaged()
+    assert result is None
+    assert store.path.exists(), "original file must be left intact on failure"
+    assert any(
+        "Failed to quarantine" in r.getMessage() for r in caplog.records
+    )
+    caplog.clear()

@@ -73,9 +73,23 @@ def start(config: AppConfig) -> None:
         try:
             names = active_store.load()
         except ActiveSkillsLoadError:
-            logger.warning(
+            logger.exception(
                 "active_skills.json is damaged; starting with no skills active"
             )
+            sidecar = active_store.quarantine_damaged()
+            if sidecar is not None:
+                session.startup_warnings.append(
+                    "Your previous skill selection could not be restored — "
+                    f"the stored file was damaged and was moved to {sidecar}. "
+                    "Re-enable the skills you need; the old file is preserved "
+                    "for manual inspection."
+                )
+            else:
+                session.startup_warnings.append(
+                    "Your previous skill selection could not be restored — "
+                    "the stored file was damaged and could not be quarantined. "
+                    "Re-enable the skills you need."
+                )
             return
         if not names:
             return

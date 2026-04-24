@@ -38,7 +38,7 @@ def test_should_pass_native_kwargs_for_native_mode() -> None:
         default_provider="p",
     )
     with patch("stoiquent.app.ui") as mock_ui, \
-         patch("stoiquent.app.app") as mock_app:
+         patch("stoiquent.app.app"):
         mock_ui.run = MagicMock()
         mock_ui.page = MagicMock(return_value=lambda f: f)
 
@@ -59,7 +59,7 @@ def test_should_pass_browser_kwargs_for_browser_mode() -> None:
         default_provider="p",
     )
     with patch("stoiquent.app.ui") as mock_ui, \
-         patch("stoiquent.app.app") as mock_app:
+         patch("stoiquent.app.app"):
         mock_ui.run = MagicMock()
         mock_ui.page = MagicMock(return_value=lambda f: f)
 
@@ -225,7 +225,10 @@ async def test_restore_activates_every_saved_skill() -> None:
         )
 
 
-async def test_restore_is_noop_when_active_store_damaged() -> None:
+async def test_restore_is_noop_when_active_store_damaged(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from pathlib import Path
     from unittest.mock import AsyncMock
 
     from stoiquent.skills.active_store import ActiveSkillsLoadError
@@ -237,21 +240,81 @@ async def test_restore_is_noop_when_active_store_damaged() -> None:
     with patch("stoiquent.app.ui") as mock_ui, \
          patch("stoiquent.app.app") as mock_app, \
          patch("stoiquent.app.ActiveSkillsStore") as mock_active_store_cls, \
-         patch("stoiquent.app.SkillController") as mock_controller_cls:
+         patch("stoiquent.app.SkillController") as mock_controller_cls, \
+         patch("stoiquent.app.Session") as mock_session_cls:
         mock_ui.run = MagicMock()
         mock_ui.page = MagicMock(return_value=lambda f: f)
         mock_active_store_cls.return_value.load.side_effect = ActiveSkillsLoadError(
             "damaged"
         )
+        sidecar_path = Path("/tmp/active_skills.json.corrupt-20260424T000000Z")
+        mock_active_store_cls.return_value.quarantine_damaged.return_value = (
+            sidecar_path
+        )
         mock_controller_cls.return_value.activate_many = AsyncMock()
+        fake_warnings: list[str] = []
+        mock_session_cls.return_value.startup_warnings = fake_warnings
 
         from stoiquent.app import start
 
         start(config)
 
         hook = mock_app.on_startup.call_args_list[0].args[0]
-        await hook()
+        with caplog.at_level("ERROR", logger="stoiquent.app"):
+            await hook()
+
         mock_controller_cls.return_value.activate_many.assert_not_called()
+        mock_active_store_cls.return_value.quarantine_damaged.assert_called_once_with()
+        assert any(
+            "active_skills.json is damaged" in r.getMessage()
+            and r.exc_info is not None
+            for r in caplog.records
+        ), "damaged-JSON branch must emit logger.exception, not logger.warning"
+        assert any(
+            str(sidecar_path) in w and "damaged" in w for w in fake_warnings
+        ), f"session.startup_warnings should name the sidecar; got {fake_warnings!r}"
+
+
+async def test_restore_appends_fallback_warning_when_quarantine_fails(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """quarantine_damaged returns None when the rename itself fails
+    (e.g. read-only fs). The startup path must still queue a warning —
+    otherwise the user is left with a silently reset skill selection."""
+    from unittest.mock import AsyncMock
+
+    from stoiquent.skills.active_store import ActiveSkillsLoadError
+
+    config = AppConfig(
+        providers={"p": ProviderConfig(base_url="http://x", model="m")},
+        default_provider="p",
+    )
+    with patch("stoiquent.app.ui") as mock_ui, \
+         patch("stoiquent.app.app") as mock_app, \
+         patch("stoiquent.app.ActiveSkillsStore") as mock_active_store_cls, \
+         patch("stoiquent.app.SkillController") as mock_controller_cls, \
+         patch("stoiquent.app.Session") as mock_session_cls:
+        mock_ui.run = MagicMock()
+        mock_ui.page = MagicMock(return_value=lambda f: f)
+        mock_active_store_cls.return_value.load.side_effect = ActiveSkillsLoadError(
+            "damaged"
+        )
+        mock_active_store_cls.return_value.quarantine_damaged.return_value = None
+        mock_controller_cls.return_value.activate_many = AsyncMock()
+        fake_warnings: list[str] = []
+        mock_session_cls.return_value.startup_warnings = fake_warnings
+
+        from stoiquent.app import start
+
+        start(config)
+
+        hook = mock_app.on_startup.call_args_list[0].args[0]
+        with caplog.at_level("ERROR", logger="stoiquent.app"):
+            await hook()
+
+        assert len(fake_warnings) == 1
+        assert "could not be quarantined" in fake_warnings[0]
+        caplog.clear()
 
 
 async def test_restore_logs_per_skill_activation_failure(

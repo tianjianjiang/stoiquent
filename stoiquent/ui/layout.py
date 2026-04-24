@@ -85,6 +85,18 @@ async def render(
         with splitter.after:
             chat.render()
 
+    for warning in session.consume_startup_warnings():
+        # Startup warnings describe recovery actions the user should
+        # see — keep them persistent + dismissable rather than auto-
+        # hiding so a user who tabs away doesn't miss the signal.
+        ui.notify(
+            warning,
+            type="warning",
+            multi_line=True,
+            close_button="Dismiss",
+            timeout=0,
+        )
+
     def _teardown_page() -> None:
         # Exception-isolate the teardowns: a misbehaving unsubscribe
         # callable must not prevent the sibling teardown from running, or

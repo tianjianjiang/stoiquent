@@ -29,9 +29,27 @@ class Session:
     tool_timeout: float = 300.0
     project_id: str | None = None
     project_instructions: str = ""
+    # Warnings accumulated during startup hooks before any page is
+    # rendered — ``ui.notify`` has no client context yet, so the UI
+    # layer must drain these via :meth:`consume_startup_warnings` on
+    # the first page mount.
+    startup_warnings: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if self.iteration_limit <= 0:
             raise ValueError(f"iteration_limit must be positive, got {self.iteration_limit}")
         if self.tool_timeout <= 0:
             raise ValueError(f"tool_timeout must be positive, got {self.tool_timeout}")
+
+    def consume_startup_warnings(self) -> list[str]:
+        """Return and clear queued startup warnings.
+
+        Safe on the single-threaded NiceGUI event loop: the returned
+        snapshot is stable while the in-place clear runs before any
+        concurrent appender. Subsequent calls return ``[]`` until new
+        warnings are queued, so multiple page renders don't replay the
+        same notification.
+        """
+        warnings = list(self.startup_warnings)
+        self.startup_warnings.clear()
+        return warnings
