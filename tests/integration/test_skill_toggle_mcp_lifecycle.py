@@ -8,6 +8,7 @@ future refactor skips the MCP hookup.
 """
 from __future__ import annotations
 
+import logging
 import sys
 from pathlib import Path
 
@@ -27,6 +28,41 @@ ECHO_SERVER = str(
     / "echo_server.py"
 )
 
+# Substrings MCPBridge logs when subprocess reap needed SIGKILL escalation
+# or raised during cleanup. If any of these appear in caplog, the bridge
+# left orphans the graceful stop couldn't reclaim — the exact case the
+# integration test's try/finally pattern would otherwise mask.
+_BRIDGE_CLEANUP_FAILURE_MARKERS: tuple[str, ...] = (
+    "required SIGKILL fallback",
+    "reap raised",
+    "cleanup failed",
+    "could not SIGKILL orphan",
+)
+
+
+def _assert_bridge_cleanly_drained(
+    bridge: MCPBridge, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Guard against the silent-cleanup antipattern where ``stop_all``
+    logs-and-continues: assert there are no server ids left and no
+    MCPBridge warning/error records indicating a leaked subprocess.
+    Reset caplog so NiceGUI-style teardown checks elsewhere don't trip
+    on our captured integration-test records."""
+    assert bridge.server_ids == [], (
+        f"bridge still tracks server ids after stop_all: {bridge.server_ids}"
+    )
+    leaked = [
+        r for r in caplog.records
+        if r.name.startswith("stoiquent.skills.mcp_bridge")
+        and r.levelno >= logging.WARNING
+        and any(m in r.getMessage() for m in _BRIDGE_CLEANUP_FAILURE_MARKERS)
+    ]
+    assert not leaked, (
+        f"MCPBridge logged a subprocess-leak warning; orphan left behind: "
+        f"{[r.getMessage() for r in leaked]!r}"
+    )
+    caplog.clear()
+
 
 def _echo_skill() -> Skill:
     return Skill(
@@ -43,7 +79,9 @@ def _echo_skill() -> Skill:
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_controller_starts_and_stops_mcp_server_on_toggle() -> None:
+async def test_controller_starts_and_stops_mcp_server_on_toggle(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     bridge = MCPBridge()
     catalog = SkillCatalog({"echo-skill": _echo_skill()})
     controller = SkillController(catalog, bridge)
@@ -63,15 +101,16 @@ async def test_controller_starts_and_stops_mcp_server_on_toggle() -> None:
         result = await controller.deactivate("echo-skill")
         assert result.success, result.reason
         assert catalog.skills["echo-skill"].active is False
-        assert bridge.server_ids == []
     finally:
-        await bridge.stop_all()
+        with caplog.at_level(logging.WARNING, logger="stoiquent.skills.mcp_bridge"):
+            await bridge.stop_all()
+        _assert_bridge_cleanly_drained(bridge, caplog)
 
 
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_controller_persists_active_set_across_instances(
-    tmp_path: Path,
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
 ) -> None:
     bridge = MCPBridge()
     store = ActiveSkillsStore(PersistenceConfig(data_dir=str(tmp_path)))
@@ -83,7 +122,9 @@ async def test_controller_persists_active_set_across_instances(
         await store.drain_pending()
         assert store.load() == ["echo-skill"]
     finally:
-        await bridge.stop_all()
+        with caplog.at_level(logging.WARNING, logger="stoiquent.skills.mcp_bridge"):
+            await bridge.stop_all()
+        _assert_bridge_cleanly_drained(bridge, caplog)
 
     fresh_bridge = MCPBridge()
     fresh_catalog = SkillCatalog({"echo-skill": _echo_skill()})
@@ -94,13 +135,15 @@ async def test_controller_persists_active_set_across_instances(
         assert fresh_catalog.skills["echo-skill"].active is True
         assert len(fresh_bridge.server_ids) == 1
     finally:
-        await fresh_bridge.stop_all()
+        with caplog.at_level(logging.WARNING, logger="stoiquent.skills.mcp_bridge"):
+            await fresh_bridge.stop_all()
+        _assert_bridge_cleanly_drained(fresh_bridge, caplog)
 
 
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_controller_reload_drops_vanished_skill_and_stops_its_mcp(
-    tmp_path: Path,
+    tmp_path: Path, caplog: pytest.LogCaptureFixture,
 ) -> None:
     bridge = MCPBridge()
     store = ActiveSkillsStore(PersistenceConfig(data_dir=str(tmp_path)))
@@ -113,7 +156,8 @@ async def test_controller_reload_drops_vanished_skill_and_stops_its_mcp(
 
         result = await controller.reload_from_disk(lambda: {})
         assert result.removed == ["echo-skill"]
-        assert bridge.server_ids == []
         assert "echo-skill" not in catalog.skills
     finally:
-        await bridge.stop_all()
+        with caplog.at_level(logging.WARNING, logger="stoiquent.skills.mcp_bridge"):
+            await bridge.stop_all()
+        _assert_bridge_cleanly_drained(bridge, caplog)
