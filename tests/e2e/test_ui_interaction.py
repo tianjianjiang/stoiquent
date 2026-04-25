@@ -106,8 +106,8 @@ async def test_skills_tab_shows_active_skills_only(
     await user.should_see("greet")
     await user.should_see("Greeting skill")
     await user.should_see("Manage skills")
-    assert not user.notify.contains("search")
-    assert not user.notify.contains("Search skill")
+    await user.should_not_see("search")
+    await user.should_not_see("Search skill")
 
 
 # --- Session list + load ---

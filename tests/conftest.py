@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import functools
 import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
@@ -28,18 +27,20 @@ pytest_plugins = ["nicegui.testing.plugin"]
 # instrumentation the page-build coroutine can miss the 3s window, which
 # causes nicegui to call `client.delete()` and the next `User.open()` to
 # raise `KeyError(client_id)` deep inside `Client.instances[client_id]`.
-# The 21 KeyError failures we saw on PR #33 in run 24886651427 all match
-# this pattern. Increasing the default makes the suite tolerant of CI
-# scheduling jitter; tests that pass an explicit `response_timeout=` to
-# `@ui.page()` continue to honour their own value.
+# Tests that pass an explicit `response_timeout=` to `@ui.page()` keep
+# their own value (the wrapper preserves nicegui's keyword-only barrier
+# after `path`, so positional misuse still raises as upstream intends).
 _orig_page_init = _nicegui_page.page.__init__
 
 
-@functools.wraps(_orig_page_init)
 def _page_init_with_ci_safe_timeout(
-    self: Any, path: str, *args: Any, response_timeout: float = 15.0, **kwargs: Any
+    self: _nicegui_page.page,
+    path: str,
+    *,
+    response_timeout: float = 15.0,
+    **kwargs: Any,
 ) -> None:
-    _orig_page_init(self, path, *args, response_timeout=response_timeout, **kwargs)
+    _orig_page_init(self, path, response_timeout=response_timeout, **kwargs)
 
 
 _nicegui_page.page.__init__ = _page_init_with_ci_safe_timeout
