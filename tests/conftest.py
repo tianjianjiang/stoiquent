@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import functools
 import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TypeAlias
+
+from nicegui import page as _nicegui_page
 
 from stoiquent.models import (
     AppConfig,
@@ -18,6 +21,28 @@ from stoiquent.projects import ProjectStore
 from stoiquent.skills.models import Skill, SkillMeta
 
 pytest_plugins = ["nicegui.testing.plugin"]
+
+
+# Bump @ui.page's `response_timeout` default from 3s to 15s for the test
+# suite. CI runners are slower than dev machines; under coverage
+# instrumentation the page-build coroutine can miss the 3s window, which
+# causes nicegui to call `client.delete()` and the next `User.open()` to
+# raise `KeyError(client_id)` deep inside `Client.instances[client_id]`.
+# The 21 KeyError failures we saw on PR #33 in run 24886651427 all match
+# this pattern. Increasing the default makes the suite tolerant of CI
+# scheduling jitter; tests that pass an explicit `response_timeout=` to
+# `@ui.page()` continue to honour their own value.
+_orig_page_init = _nicegui_page.page.__init__
+
+
+@functools.wraps(_orig_page_init)
+def _page_init_with_ci_safe_timeout(
+    self: Any, path: str, *args: Any, response_timeout: float = 15.0, **kwargs: Any
+) -> None:
+    _orig_page_init(self, path, *args, response_timeout=response_timeout, **kwargs)
+
+
+_nicegui_page.page.__init__ = _page_init_with_ci_safe_timeout
 
 Turn: TypeAlias = list[StreamChunk]
 """Chunks yielded within a single ``FakeToolCallingProvider.stream`` call."""
