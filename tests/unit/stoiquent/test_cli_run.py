@@ -6,7 +6,6 @@ from unittest.mock import patch
 from click.testing import CliRunner
 
 from stoiquent.cli import main
-from stoiquent.models import AppConfig, ProviderConfig
 
 
 def _write_config(tmp_path: Path) -> Path:
