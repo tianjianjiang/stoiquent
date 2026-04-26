@@ -114,6 +114,10 @@ async def test_controller_starts_and_stops_mcp_server_on_toggle(
         result = await controller.deactivate("echo-skill")
         assert result.success, result.reason
         assert catalog.skills["echo-skill"].active is False
+        assert bridge.server_ids == [], (
+            "deactivate should stop the MCP server immediately, "
+            f"but bridge still tracks: {bridge.server_ids}"
+        )
     finally:
         with caplog.at_level(logging.WARNING, logger="stoiquent.skills.mcp_bridge"):
             await bridge.stop_all()
@@ -170,6 +174,10 @@ async def test_controller_reload_drops_vanished_skill_and_stops_its_mcp(
         result = await controller.reload_from_disk(lambda: {})
         assert result.removed == ["echo-skill"]
         assert "echo-skill" not in catalog.skills
+        assert bridge.server_ids == [], (
+            "reload should stop the MCP server for the vanished skill, "
+            f"but bridge still tracks: {bridge.server_ids}"
+        )
     finally:
         with caplog.at_level(logging.WARNING, logger="stoiquent.skills.mcp_bridge"):
             await bridge.stop_all()

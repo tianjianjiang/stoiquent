@@ -19,17 +19,23 @@ stoiquent/
 |   +-- config.py, models.py, app.py, cli.py
 |   +-- agent/       loop.py, context.py, tool_dispatch.py, session.py
 |   +-- llm/         provider.py, openai_compat.py, reasoning.py
-|   +-- skills/      loader.py, catalog.py, executor.py,
-|   |                mcp_bridge.py, mcp_app.py, mcp_server.py
+|   +-- skills/      loader.py, catalog.py, controller.py, executor.py,
+|   |                active_store.py, mcp_bridge.py, mcp_app.py,
+|   |                mcp_server.py
 |   +-- sandbox/     base.py, detect.py, policy.py, oci.py,
 |   |                apple_container.py, firecracker.py, gvisor.py,
 |   |                bwrap.py, nsjail.py, noop.py
 |   +-- persistence/ conversations.py, projects.py
 |   +-- ui/          layout.py, chat.py, sidebar.py, file_browser.py,
-|   |                project_panel.py, tool_card.py
+|   |                project_panel.py, skills_header.py,
+|   |                skills_manager.py, tool_card.py
 +-- skills/hello-world/SKILL.md
 +-- tests/
 ```
+
+`controller.py` and `active_store.py` (skills) plus `skills_header.py` and
+`skills_manager.py` (UI) are the three-surface skills-management pieces
+detailed in §4.
 
 ### 1.2 Sandbox Backend Tiers
 
