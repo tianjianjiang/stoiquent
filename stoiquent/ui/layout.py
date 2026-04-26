@@ -10,6 +10,7 @@ from stoiquent.agent.session import Session
 from stoiquent.skills.discovery import discover_skills
 from stoiquent.ui.chat import ChatPanel
 from stoiquent.ui.sidebar import Sidebar, SessionSwitch
+from stoiquent.ui.skills_header import SkillsHeaderMenu
 from stoiquent.ui.skills_manager import SkillsManager
 from stoiquent.ui.theme import DarkModeToggle, apply_theme
 
@@ -44,6 +45,13 @@ async def render(
         chat.reload_messages()
         ui.notify("Provider switched. Starting fresh conversation.")
 
+    skills_manager = SkillsManager(
+        session.controller,
+        discover=(
+            (lambda cfg=config.skills: discover_skills(cfg)) if config else None
+        ),
+    )
+
     with ui.header().classes("items-center gap-4 px-4"):
         ui.label("Stoiquent").classes("text-h6 font-bold")
         ui.space()
@@ -55,14 +63,12 @@ async def render(
                 value=config.default_provider,
                 on_change=lambda e: on_provider_change(e.value),
             ).classes("w-40").props("dense").mark("provider-select")
+        skills_header = SkillsHeaderMenu(
+            session.controller, manager=skills_manager
+        )
+        skills_header.build()
         ui.label("Local LLM Agent").classes("text-caption opacity-60")
 
-    skills_manager = SkillsManager(
-        session.controller,
-        discover=(
-            (lambda cfg=config.skills: discover_skills(cfg)) if config else None
-        ),
-    )
     skills_manager.build()
 
     with ui.splitter(value=20).classes("w-full h-screen") as splitter:
@@ -80,11 +86,12 @@ async def render(
             chat.render()
 
     def _teardown_page() -> None:
-        # Exception-isolate the two teardowns: a misbehaving unsubscribe
+        # Exception-isolate the teardowns: a misbehaving unsubscribe
         # callable must not prevent the sibling teardown from running, or
         # the "leak" the teardown was meant to plug survives silently.
         for label, teardown in (
             ("skills_manager", skills_manager.teardown),
+            ("skills_header", skills_header.teardown),
             ("sidebar", sidebar.teardown),
         ):
             try:

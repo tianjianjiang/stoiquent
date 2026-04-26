@@ -442,3 +442,72 @@ async def test_layout_teardown_continues_when_one_teardown_raises(
     # NiceGUI's test teardown fails on lingering ERROR logs; the one we
     # emitted is expected, so clear it.
     caplog.clear()
+
+
+@pytest.mark.asyncio
+async def test_layout_teardown_continues_when_skills_header_raises(
+    user: User, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Regression guard for the middle leg of the teardown loop: if
+    SkillsHeaderMenu.teardown raises, both SkillsManager.teardown
+    (earlier in the tuple) and Sidebar.teardown (later) must still run
+    via the per-iteration try/except."""
+    session = Session(provider=FakeProvider())
+    project_store = make_project_store(tmp_path)
+
+    from nicegui.client import Client
+
+    from stoiquent.ui.sidebar import Sidebar as SidebarCls
+    from stoiquent.ui.skills_header import SkillsHeaderMenu as SHMCls
+    from stoiquent.ui.skills_manager import SkillsManager as SMCls
+
+    captured: list[object] = []
+
+    def _spy(self: Client, cb: object) -> None:
+        captured.append(cb)
+
+    monkeypatch.setattr(Client, "on_disconnect", _spy)
+
+    mgr_called: list[bool] = []
+    sidebar_called: list[bool] = []
+    real_mgr_teardown = SMCls.teardown
+    real_sidebar_teardown = SidebarCls.teardown
+
+    def _counting_mgr_teardown(self: SMCls) -> None:
+        mgr_called.append(True)
+        real_mgr_teardown(self)
+
+    def _raising_header_teardown(self: SHMCls) -> None:
+        raise RuntimeError("header unsub exploded")
+
+    def _counting_sidebar_teardown(self: SidebarCls) -> None:
+        sidebar_called.append(True)
+        real_sidebar_teardown(self)
+
+    monkeypatch.setattr(SMCls, "teardown", _counting_mgr_teardown)
+    monkeypatch.setattr(SHMCls, "teardown", _raising_header_teardown)
+    monkeypatch.setattr(SidebarCls, "teardown", _counting_sidebar_teardown)
+
+    @ui.page("/test-teardown-header-isolation")
+    async def page() -> None:
+        await layout.render(session, None, None, project_store=project_store)
+
+    await user.open("/test-teardown-header-isolation")
+    ours = [
+        cb for cb in captured
+        if callable(cb) and getattr(cb, "__name__", "") == "_teardown_page"
+    ]
+    assert ours
+    with caplog.at_level(logging.ERROR, logger="stoiquent.ui.layout"):
+        ours[0]()
+    assert mgr_called == [True], (
+        "skills_manager.teardown (before header) must run"
+    )
+    assert sidebar_called == [True], (
+        "sidebar.teardown (after header) must run even if header raised"
+    )
+    assert any(
+        "skills_header" in r.getMessage() for r in caplog.records
+    ), "failing teardown must be logged"
+    caplog.clear()
