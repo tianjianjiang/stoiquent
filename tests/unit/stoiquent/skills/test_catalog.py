@@ -137,3 +137,18 @@ def test_should_not_mutate_original_skills_dict() -> None:
     catalog = SkillCatalog(original)
     catalog.activate("hello")
     assert original["hello"].active is False
+
+
+def test_replace_swaps_catalog_contents() -> None:
+    catalog = SkillCatalog({"old": _make_skill("old", active=True)})
+    catalog.replace({"new": _make_skill("new")})
+    assert "old" not in catalog.skills
+    assert "new" in catalog.skills
+
+
+def test_replace_copies_dict_so_caller_mutations_do_not_leak() -> None:
+    catalog = SkillCatalog()
+    new_contents = {"a": _make_skill("a")}
+    catalog.replace(new_contents)
+    new_contents["b"] = _make_skill("b")
+    assert "b" not in catalog.skills
