@@ -17,6 +17,7 @@ from stoiquent.ui import layout
 from stoiquent.ui.layout import (
     _apply_session_switch,
     _load_project_instructions,
+    _surface_startup_warnings,
     _switch_provider,
 )
 from stoiquent.ui.sidebar import SessionSwitch
@@ -511,3 +512,102 @@ async def test_layout_teardown_continues_when_skills_header_raises(
         "skills_header" in r.getMessage() for r in caplog.records
     ), "failing teardown must be logged"
     caplog.clear()
+
+
+@pytest.mark.asyncio
+async def test_layout_drains_and_renders_startup_warnings(
+    user: User, tmp_path: Path
+) -> None:
+    """Warnings queued on ``session.startup_warnings`` during startup
+    hooks (e.g. damaged active_skills.json recovery) must reach the
+    user as ui.notify toasts, and must be drained from the session
+    queue so reconnecting clients don't replay them.
+
+    NiceGUI's test harness installs its own ``UserNotify`` as
+    ``nicegui.ui.notify`` inside the per-page task (overriding any
+    ``unittest.mock.patch`` applied from the test body), but it
+    exposes captured messages via ``user.notify.messages``. We assert
+    behavior through that channel."""
+    session = Session(provider=FakeProvider())
+    session.startup_warnings.extend([
+        "Your skill selection was reset — file was damaged",
+        "Some other recovery notice",
+    ])
+    project_store = make_project_store(tmp_path)
+
+    @ui.page("/test-startup-warnings")
+    async def page() -> None:
+        await layout.render(session, None, None, project_store=project_store)
+
+    await user.open("/test-startup-warnings")
+    await user.should_see("Your skill selection was reset")
+    await user.should_see("Some other recovery notice")
+    assert session.startup_warnings == [], (
+        "startup_warnings must be drained after render"
+    )
+
+
+@pytest.mark.asyncio
+async def test_layout_with_no_startup_warnings_emits_no_warning_toast(
+    user: User, tmp_path: Path
+) -> None:
+    """Happy path: when no warnings are queued, no startup-warning
+    notification reaches the user."""
+    session = Session(provider=FakeProvider())
+    project_store = make_project_store(tmp_path)
+
+    @ui.page("/test-no-startup-warnings")
+    async def page() -> None:
+        await layout.render(session, None, None, project_store=project_store)
+
+    await user.open("/test-no-startup-warnings")
+    await user.should_see("Stoiquent")
+    await user.should_not_see("Your skill selection")
+    assert session.startup_warnings == []
+
+
+def test_surface_startup_warnings_re_queues_when_notify_raises(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """If ``ui.notify`` raises mid-loop, the unrendered warning must be
+    re-queued so the next layout build retries — ``consume_startup_warnings``
+    already drained ``session.startup_warnings`` into a snapshot, so an
+    unhandled raise would silently drop the user-facing message."""
+    session = Session(provider=FakeProvider())
+    session.startup_warnings.extend(["alpha", "beta"])
+
+    raises = Mock(side_effect=RuntimeError("notify backend down"))
+    monkeypatch.setattr("stoiquent.ui.layout.ui.notify", raises)
+
+    with caplog.at_level(logging.ERROR, logger="stoiquent.ui.layout"):
+        _surface_startup_warnings(session)
+
+    assert raises.call_count == 2, "every queued warning must be attempted"
+    assert sorted(session.startup_warnings) == ["alpha", "beta"], (
+        "both warnings must be re-queued so the next render retries"
+    )
+    error_records = [
+        r
+        for r in caplog.records
+        if r.levelname == "ERROR"
+        and r.name == "stoiquent.ui.layout"
+        and "Failed to surface startup warning" in r.message
+    ]
+    assert len(error_records) == 2, (
+        "each notify failure must emit a logger.exception for ops visibility"
+    )
+
+
+def test_surface_startup_warnings_drains_queue_on_happy_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Happy path companion: when ``ui.notify`` succeeds, the queue
+    drains to empty and no warnings are re-queued."""
+    session = Session(provider=FakeProvider())
+    session.startup_warnings.extend(["only"])
+    monkeypatch.setattr("stoiquent.ui.layout.ui.notify", Mock())
+
+    _surface_startup_warnings(session)
+
+    assert session.startup_warnings == []

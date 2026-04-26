@@ -162,3 +162,103 @@ async def test_should_return_empty_list_when_file_vanishes_between_exists_and_re
     monkeypatch.setattr(Path, "read_text", _vanishing_read)
     assert store.load() == []
     monkeypatch.setattr(Path, "read_text", original_read)
+
+
+def test_quarantine_damaged_renames_file_with_iso_timestamp_suffix(
+    tmp_path: Path,
+) -> None:
+    """A damaged file is moved aside under a sidecar name that (a)
+    preserves the original contents for manual inspection and (b)
+    contains a timestamp so multiple damage events don't collide."""
+    store = _make_store(tmp_path)
+    store.path.parent.mkdir(parents=True, exist_ok=True)
+    store.path.write_text("corrupt bytes", encoding="utf-8")
+
+    sidecar = store.quarantine_damaged()
+    assert sidecar is not None
+    assert not store.path.exists()
+    assert sidecar.exists()
+    assert sidecar.read_text(encoding="utf-8") == "corrupt bytes"
+    assert sidecar.name.startswith("active_skills.json.corrupt-")
+    assert sidecar.name.endswith("Z"), (
+        "sidecar suffix should be an ISO-8601 timestamp ending with Z"
+    )
+
+
+def test_quarantine_damaged_returns_none_when_file_missing(
+    tmp_path: Path,
+) -> None:
+    """Guard against callers invoking quarantine on an already-absent
+    file (e.g. a racing external process cleaned it up between load and
+    quarantine). Must be a silent no-op, not a raise."""
+    store = _make_store(tmp_path)
+    assert store.quarantine_damaged() is None
+
+
+def test_quarantine_damaged_uses_numeric_suffix_on_subsecond_collision(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two damage events within the same wall-clock second must not
+    silently clobber each other — ``os.replace`` atomically overwrites
+    the destination, so a second sidecar at the same path would silently
+    overwrite the first sidecar's contents and leave only the latest
+    corrupt snapshot. The docstring promises both snapshots survive."""
+    from datetime import datetime, timezone
+
+    from stoiquent.skills import active_store as module
+
+    store = _make_store(tmp_path)
+    store.path.parent.mkdir(parents=True, exist_ok=True)
+    store.path.write_text("first damage", encoding="utf-8")
+
+    fixed = datetime(2026, 4, 24, 12, 0, 0, tzinfo=timezone.utc)
+
+    class _FixedClock:
+        @staticmethod
+        def now(tz: object = None) -> datetime:
+            return fixed
+
+    monkeypatch.setattr(module, "datetime", _FixedClock)
+
+    first = store.quarantine_damaged()
+    assert first is not None and first.exists()
+    assert first.read_text(encoding="utf-8") == "first damage"
+
+    store.path.write_text("second damage", encoding="utf-8")
+    second = store.quarantine_damaged()
+
+    assert second is not None and second.exists()
+    assert second != first, "second sidecar must not collide with first"
+    assert first.exists(), "first sidecar must survive a same-second collision"
+    assert first.read_text(encoding="utf-8") == "first damage"
+    assert second.read_text(encoding="utf-8") == "second damage"
+
+
+def test_quarantine_damaged_returns_none_and_logs_on_rename_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """If the rename itself fails (read-only filesystem, permissions),
+    return None and log rather than raise. Quarantine is a recovery
+    path — it must never abort the startup sequence that invoked it."""
+    import logging
+    import os
+
+    store = _make_store(tmp_path)
+    store.path.parent.mkdir(parents=True, exist_ok=True)
+    store.path.write_text("corrupt", encoding="utf-8")
+
+    def _replace_raises(src: object, dst: object) -> None:
+        raise PermissionError("read-only filesystem")
+
+    monkeypatch.setattr(os, "replace", _replace_raises)
+    with caplog.at_level(logging.ERROR, logger="stoiquent.skills.active_store"):
+        result = store.quarantine_damaged()
+    assert result is None
+    assert store.path.exists(), "original file must be left intact on failure"
+    assert any(
+        "Failed to quarantine" in r.getMessage() for r in caplog.records
+    )
+    caplog.clear()

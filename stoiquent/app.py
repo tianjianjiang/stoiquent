@@ -73,9 +73,28 @@ def start(config: AppConfig) -> None:
         try:
             names = active_store.load()
         except ActiveSkillsLoadError:
-            logger.warning(
+            logger.exception(
                 "active_skills.json is damaged; starting with no skills active"
             )
+            sidecar = active_store.quarantine_damaged()
+            if sidecar is not None:
+                message = (
+                    "Your previous skill selection could not be restored — "
+                    f"the stored file was damaged and was moved to {sidecar}. "
+                    "Re-enable the skills you need; the old file is preserved "
+                    "for manual inspection."
+                )
+            else:
+                message = (
+                    "Your previous skill selection could not be restored — "
+                    "the stored file was damaged and could not be quarantined. "
+                    "Re-enable the skills you need."
+                )
+            # Mirror to the log so headless or pre-mount exits (port-in-use,
+            # native-window crash) still leave the user-facing text on disk;
+            # the queued copy is only surfaced on the first page render.
+            logger.warning("Startup warning queued for user: %s", message)
+            session.startup_warnings.append(message)
             return
         if not names:
             return

@@ -86,6 +86,44 @@ class ActiveSkillsStore:
     async def load_async(self) -> list[str]:
         return await asyncio.to_thread(self.load)
 
+    def quarantine_damaged(self) -> Path | None:
+        """Rename a damaged ``active_skills.json`` to a timestamped sidecar.
+
+        Call after :meth:`load` raises :class:`ActiveSkillsLoadError` so
+        the next :meth:`save_sync` doesn't overwrite the corrupt contents
+        with a fresh empty-or-partial state. The sidecar
+        (``active_skills.json.corrupt-<ISO-8601>``) preserves the
+        original bytes for the user to inspect or restore manually.
+
+        Returns the sidecar path on success, or ``None`` when the source
+        file is missing or the rename itself fails (e.g. EPERM). The
+        failure is logged but not raised because this method runs in
+        a post-error recovery path and must never itself abort startup.
+        """
+        if not self._path.exists():
+            return None
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        sidecar = self._path.with_name(f"{self._path.name}.corrupt-{timestamp}")
+        # Sub-second collisions (rapid restart loop, supervisord respawn)
+        # would silently clobber the prior sidecar via os.replace; bump
+        # a numeric suffix so each corrupt snapshot survives for the
+        # manual inspection the docstring promises.
+        counter = 0
+        while sidecar.exists():
+            counter += 1
+            sidecar = self._path.with_name(
+                f"{self._path.name}.corrupt-{timestamp}.{counter}"
+            )
+        try:
+            os.replace(self._path, sidecar)
+        except OSError:
+            logger.exception(
+                "Failed to quarantine damaged active_skills.json at %s",
+                self._path,
+            )
+            return None
+        return sidecar
+
     def save_sync(self, active: list[str]) -> None:
         record = ActiveSkillsRecord(
             active=sorted(set(active)),
