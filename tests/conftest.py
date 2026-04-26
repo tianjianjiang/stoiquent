@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TypeAlias
 
+from nicegui import page as _nicegui_page
+
 from stoiquent.models import (
     AppConfig,
     Message,
@@ -18,6 +20,30 @@ from stoiquent.projects import ProjectStore
 from stoiquent.skills.models import Skill, SkillMeta
 
 pytest_plugins = ["nicegui.testing.plugin"]
+
+
+# Bump @ui.page's `response_timeout` default from 3s to 15s for the test
+# suite. CI runners are slower than dev machines; under coverage
+# instrumentation the page-build coroutine can miss the 3s window, which
+# causes nicegui to call `client.delete()` and the next `User.open()` to
+# raise `KeyError(client_id)` deep inside `Client.instances[client_id]`.
+# Tests that pass an explicit `response_timeout=` to `@ui.page()` keep
+# their own value (the wrapper preserves nicegui's keyword-only barrier
+# after `path`, so positional misuse still raises as upstream intends).
+_orig_page_init = _nicegui_page.page.__init__
+
+
+def _page_init_with_ci_safe_timeout(
+    self: _nicegui_page.page,
+    path: str,
+    *,
+    response_timeout: float = 15.0,
+    **kwargs: Any,
+) -> None:
+    _orig_page_init(self, path, response_timeout=response_timeout, **kwargs)
+
+
+_nicegui_page.page.__init__ = _page_init_with_ci_safe_timeout
 
 Turn: TypeAlias = list[StreamChunk]
 """Chunks yielded within a single ``FakeToolCallingProvider.stream`` call."""

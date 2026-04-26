@@ -7,8 +7,10 @@ from typing import TYPE_CHECKING
 from nicegui import ui
 
 from stoiquent.agent.session import Session
+from stoiquent.skills.discovery import discover_skills
 from stoiquent.ui.chat import ChatPanel
 from stoiquent.ui.sidebar import Sidebar, SessionSwitch
+from stoiquent.ui.skills_manager import SkillsManager
 from stoiquent.ui.theme import DarkModeToggle, apply_theme
 
 if TYPE_CHECKING:
@@ -55,13 +57,42 @@ async def render(
             ).classes("w-40").props("dense").mark("provider-select")
         ui.label("Local LLM Agent").classes("text-caption opacity-60")
 
+    skills_manager = SkillsManager(
+        session.controller,
+        discover=(
+            (lambda cfg=config.skills: discover_skills(cfg)) if config else None
+        ),
+    )
+    skills_manager.build()
+
     with ui.splitter(value=20).classes("w-full h-screen") as splitter:
         with splitter.before:
-            sidebar = Sidebar(session, store, on_session_switch, project_store)
+            sidebar = Sidebar(
+                session,
+                store,
+                on_session_switch,
+                project_store,
+                skills_manager=skills_manager,
+            )
             await sidebar.render()
 
         with splitter.after:
             chat.render()
+
+    def _teardown_page() -> None:
+        # Exception-isolate the two teardowns: a misbehaving unsubscribe
+        # callable must not prevent the sibling teardown from running, or
+        # the "leak" the teardown was meant to plug survives silently.
+        for label, teardown in (
+            ("skills_manager", skills_manager.teardown),
+            ("sidebar", sidebar.teardown),
+        ):
+            try:
+                teardown()
+            except Exception:
+                logger.exception("Failed to tear down %s on disconnect", label)
+
+    ui.context.client.on_disconnect(_teardown_page)
 
 
 def _load_project_instructions(

@@ -75,10 +75,20 @@ async def test_sidebar_tabs_navigation(user: User, tmp_path: Path) -> None:
     await user.should_see("New Chat")
 
 
-# --- Skills toggle ---
+# --- Skills tab summary ---
 
 
-async def test_skills_tab_shows_toggles(user: User, tmp_path: Path) -> None:
+async def test_skills_tab_shows_active_skills_only(
+    user: User, tmp_path: Path
+) -> None:
+    """Sidebar Skills tab is the active-summary surface (per the
+    three-surface design: Sidebar = active list, Header = quick toggles,
+    Manager = full overlay). Inactive skills must NOT appear here — they
+    live in the Manager overlay reachable via the "Manage skills…"
+    button. The previous incarnation of this test asserted both active
+    and inactive skills were rendered with toggles, which matched the
+    old single-surface design that PR C/D/E replaced.
+    """
     catalog = SkillCatalog({
         "greet": make_skill("greet", "Greeting skill", active=True),
         "search": make_skill("search", "Search skill", active=False),
@@ -92,10 +102,12 @@ async def test_skills_tab_shows_toggles(user: User, tmp_path: Path) -> None:
 
     await user.open("/")
     user.find(marker="skills-tab").click()
+    await user.should_see("Active (1)")
     await user.should_see("greet")
     await user.should_see("Greeting skill")
-    await user.should_see("search")
-    await user.should_see("Search skill")
+    await user.should_see("Manage skills")
+    await user.should_not_see("search")
+    await user.should_not_see("Search skill")
 
 
 # --- Session list + load ---
